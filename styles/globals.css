@@ -1,0 +1,44 @@
+:root {
+  --bg:        #080909;
+  --surface:   #0f1012;
+  --surface2:  #161819;
+  --surface3:  #1c1f22;
+  --border:    #1e2226;
+  --border2:   #252b30;
+  --text:      #e6eaed;
+  --muted:     #8b949e;
+  --dim:       #4a5260;
+  --green:     #3fb950;
+  --green-bg:  rgba(63,185,80,0.12);
+  --yellow:    #d29922;
+  --yellow-bg: rgba(210,153,34,0.12);
+  --red:       #f85149;
+  --red-bg:    rgba(248,81,73,0.12);
+  --blue:      #58a6ff;
+  --blue-bg:   rgba(88,166,255,0.12);
+  --gold:      #fbbf24;
+  --gold-bg:   rgba(251,191,36,0.12);
+  --r:         12px;
+  --r-sm:      8px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+input, button { font-family: inherit; }
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+::selection { background: var(--blue-bg); color: var(--blue); }
