@@ -3,6 +3,24 @@ import { useRouter } from "next/router";
 import Head from "next/head";
 
 const REFRESH = 20;
+const DEFAULT_KWH_PRICE = 0.12; // USD por kWh — editable en el dashboard
+
+// ── Consumo eléctrico ──────────────────────────────────────────
+function calcElec(watts, pricePerKwh) {
+  const w        = watts || 0;
+  const kwhDay   = (w * 24) / 1000;
+  const kwhMonth = kwhDay * 30;
+  const kwhYear  = kwhDay * 365;
+  return {
+    watts:      w,
+    kwhDay:     kwhDay.toFixed(3),
+    kwhMonth:   kwhMonth.toFixed(1),
+    kwhYear:    kwhYear.toFixed(0),
+    costDay:    (kwhDay   * pricePerKwh).toFixed(3),
+    costMonth:  (kwhMonth * pricePerKwh).toFixed(2),
+    costYear:   (kwhYear  * pricePerKwh).toFixed(2),
+  };
+}
 
 // ── Utilidades ─────────────────────────────────────────────────
 function fmtHR(hps) {
@@ -239,7 +257,7 @@ function TempGauge({ temp }) {
 // TABS
 // ─────────────────────────────────────────────────────────────
 
-function TabResumen({ data }) {
+function TabResumen({ data, kwh=DEFAULT_KWH_PRICE }) {
   const {miners=[],publicPool:pp,netDiffFmt,odds}=data;
   const hr=pp?.online?fmtHR(pp.hashHps10m):null;
 
@@ -295,6 +313,15 @@ function TabResumen({ data }) {
                     </div>
                     <ProgressBar value={m.temp} max={85} color={sc}
                       label="Temperatura chip" right={`${m.temp}°C / 85°C`}/>
+                  {m.power>0&&(
+                    <div style={{marginTop:10,display:"flex",justifyContent:"space-between",
+                      fontSize:".72rem",color:"var(--dim)",paddingTop:10,
+                      borderTop:"1px solid var(--border)"}}>
+                      <span>💡 Costo/mes</span>
+                      <span style={{color:"var(--yellow)",fontWeight:700}}>
+                        ${calcElec(m.power,kwh).costMonth} USD</span>
+                    </div>
+                  )}
                   </>
                 ):(
                   <div style={{fontSize:".78rem",color:"var(--muted)",padding:"10px 14px",
@@ -383,16 +410,63 @@ function TabResumen({ data }) {
 }
 
 // ── Hardware tab ───────────────────────────────────────────────
-function TabHardware({ miners }) {
+function TabHardware({ miners, kwh, onKwh }) {
   if(!miners?.length) return <Card><p style={{color:"var(--muted)",padding:12}}>Sin mineros configurados.</p></Card>;
+  const totalW = miners.filter(m=>m.online).reduce((a,m)=>a+(m.power||0),0);
+  const elec   = calcElec(totalW, kwh);
   return(
     <div style={{display:"flex",flexDirection:"column",gap:20,animation:"fade-up .3s ease"}}>
-      {miners.map((m,i)=><MinerDetail key={i} m={m}/>)}
+      {/* Precio de electricidad editable */}
+      <Card>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+          flexWrap:"wrap",gap:12}}>
+          <div>
+            <div style={{fontSize:".63rem",fontWeight:700,letterSpacing:".12em",
+              textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>
+              💡 Precio electricidad
+            </div>
+            <div style={{fontSize:".78rem",color:"var(--muted)"}}>
+              Ajusta según tu tarifa local para ver el costo real
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:".82rem",color:"var(--muted)"}}>USD /kWh</span>
+            <input type="number" min="0.01" max="2" step="0.01" value={kwh}
+              onChange={e=>onKwh(parseFloat(e.target.value)||0.12)}
+              style={{width:80,background:"var(--surface2)",border:"1px solid var(--border2)",
+                color:"var(--text)",padding:"7px 12px",borderRadius:"var(--r-sm)",
+                fontSize:".88rem",fontWeight:600,textAlign:"center",outline:"none",
+                fontFamily:"'JetBrains Mono',monospace"}}/>
+          </div>
+        </div>
+        {totalW > 0 && (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",
+            gap:10,marginTop:16}}>
+            {[
+              {l:"Consumo total",v:`${totalW.toFixed(1)} W`,c:"var(--blue)"},
+              {l:"kWh / día",    v:elec.kwhDay,            c:"var(--text)"},
+              {l:"kWh / mes",   v:elec.kwhMonth,           c:"var(--text)"},
+              {l:"Costo / día",  v:`$${elec.costDay}`,     c:"var(--yellow)"},
+              {l:"Costo / mes",  v:`$${elec.costMonth}`,   c:"var(--yellow)"},
+              {l:"Costo / año",  v:`$${elec.costYear}`,    c:"var(--red)"},
+            ].map((s,i)=>(
+              <div key={i} style={{background:"var(--surface2)",border:"1px solid var(--border)",
+                borderRadius:9,padding:"10px 14px"}}>
+                <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:3}}>{s.l}</div>
+                <div style={{fontSize:"1rem",fontWeight:700,color:s.c,
+                  fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {miners.map((m,i)=><MinerDetail key={i} m={m} kwh={kwh}/>)}
     </div>
   );
 }
 
-function MinerDetail({ m }) {
+function MinerDetail({ m, kwh=DEFAULT_KWH_PRICE }) {
   const st=!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok";
   const sc={ok:"var(--green)",warn:"var(--yellow)",crit:"var(--red)",off:"var(--dim)"}[st];
   const total=(m.sharesAccepted||0)+(m.sharesRejected||0);
@@ -519,6 +593,37 @@ function MinerDetail({ m }) {
         <ProgressBar value={parseFloat(rate)||0} max={100} color="var(--green)"
           label="Tasa de aceptación" right={`${rate}%`}/>
       </div>
+
+      {/* Consumo eléctrico */}
+      {(() => {
+        const e = calcElec(m.power, kwh);
+        const eff = m.power && m.hashHps > 0 ? (m.power / (m.hashHps / 1e12)).toFixed(1) : null;
+        return (
+          <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+            borderRadius:14,padding:18,marginBottom:14}}>
+            <div style={{fontSize:".58rem",fontWeight:700,letterSpacing:".12em",
+              textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>
+              💡 Consumo eléctrico · {m.power?.toFixed(1)} W</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:10}}>
+              {[
+                {l:"kWh / día",   v:e.kwhDay,          c:"var(--text)"},
+                {l:"kWh / mes",  v:e.kwhMonth,         c:"var(--text)"},
+                {l:"Costo / día", v:`$${e.costDay}`,   c:"var(--yellow)"},
+                {l:"Costo / mes", v:`$${e.costMonth}`, c:"var(--yellow)"},
+                {l:"Costo / año", v:`$${e.costYear}`,  c:"var(--red)"},
+                {l:"Eficiencia",  v:eff?`${eff} J/TH`:"—", c:"var(--blue)"},
+              ].map((s,i)=>(
+                <div key={i} style={{background:"var(--surface3)",border:"1px solid var(--border)",
+                  borderRadius:10,padding:"12px 14px"}}>
+                  <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:4}}>{s.l}</div>
+                  <div style={{fontSize:"1rem",fontWeight:700,color:s.c,
+                    fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Footer */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
@@ -757,6 +862,7 @@ export default function Dashboard() {
   const [lastUpdate,setLastUpdate]=useState(null);
   const [countdown,setCountdown]=useState(REFRESH);
   const [tab,setTab]=useState("resumen");
+  const [kwh,setKwh]=useState(DEFAULT_KWH_PRICE);
 
   const fetchData=useCallback(async()=>{
     try{
@@ -857,8 +963,8 @@ export default function Dashboard() {
       <main style={{maxWidth:1200,margin:"0 auto",padding:"28px 24px 64px",
         width:"100%",flex:1}}>
         {loading?<Skeleton/>:<>
-          {tab==="resumen"  &&<TabResumen  data={data}/>}
-          {tab==="hardware" &&<TabHardware miners={miners}/>}
+          {tab==="resumen"  &&<TabResumen  data={data} kwh={kwh}/>}
+          {tab==="hardware" &&<TabHardware miners={miners} kwh={kwh} onKwh={setKwh}/>}
           {tab==="pool"     &&<TabPool     data={data}/>}
           {tab==="odds"     &&<TabOdds     data={data}/>}
         </>}
