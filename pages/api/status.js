@@ -8,6 +8,27 @@ import {
   calcOdds,
 } from "../../lib/format";
 
+// ── Upstash Redis (opcional) ───────────────────────────────────
+async function getMinersFromRedis() {
+  const url   = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  try {
+    const res  = await axios.post(url, ["GET","miners"],
+      { headers:{ Authorization:`Bearer ${token}` }, timeout:5000 });
+    const raw  = res.data?.result;
+    if (!raw) return null;
+    const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(data) || !data.length) return null;
+    // Enriquecer con formatos que el dashboard espera
+    return data.map(m => ({
+      ...m,
+      hashFmt:   fmtHashrate(m.hashHps || 0),
+      uptimeFmt: fmtUptime(m.uptimeSeconds || 0),
+    }));
+  } catch { return null; }
+}
+
 function parseMiners() {
   const miners = [];
   for (let i = 1; i <= 20; i++) {
@@ -173,8 +194,10 @@ export default async function handler(req, res) {
   const address = process.env.BTC_ADDRESS;
   const ppAddr  = process.env.PUBLIC_POOL_ADDRESS || address;
 
+  // Intenta Redis primero; si falla, intenta directo al minero
+  const redisData = await getMinersFromRedis();
   const [minerData, ckpool, publicPool, netDiff] = await Promise.all([
-    Promise.all(miners.map(getMiner)),
+    redisData ?? Promise.all(miners.map(getMiner)),
     address ? getCkpool(address) : Promise.resolve({ online: false, source: "ckpool", label: "solo.ckpool.org" }),
     ppAddr  ? getPublicPool(ppAddr) : Promise.resolve({ online: false, source: "publicpool", label: "public-pool.io" }),
     getNetworkDiff(),
