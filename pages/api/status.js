@@ -46,7 +46,7 @@ async function getMiner(miner) {
       stratumURL: data.stratumURL || "—",
     };
   } catch (err) {
-    return { online: false, name: miner.name, error: err.code || err.message };
+    return { online: false, name: miner.name, url: miner.url, error: err.code || err.message };
   }
 }
 

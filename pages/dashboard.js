@@ -2,661 +2,717 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 
-const REFRESH = 30;
+const REFRESH = 20;
 
 // ── Formato ───────────────────────────────────────────────────
 function fmtHR(hps) {
   if (!hps || hps <= 0) return "0 H/s";
   const u = ["H/s","KH/s","MH/s","GH/s","TH/s","PH/s"];
-  let i = 0, v = hps;
-  while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+  let i=0, v=hps;
+  while (v>=1000 && i<u.length-1){v/=1000;i++;}
   return `${v.toFixed(2)} ${u[i]}`;
 }
 function timeAgo(mins) {
-  if (!isFinite(mins) || mins == null) return "—";
-  const m = Math.round(mins);
-  if (m < 1) return "ahora mismo";
-  if (m === 1) return "hace 1 min";
-  if (m < 60) return `hace ${m} min`;
-  return `hace ${Math.round(m/60)}h`;
+  if (!isFinite(mins)||mins==null) return "—";
+  const m=Math.round(mins);
+  if (m<1) return "ahora";
+  if (m<60) return `${m}m`;
+  return `${Math.round(m/60)}h ${m%60}m`;
 }
-function truncAddr(addr) {
-  if (!addr) return "";
-  return addr.slice(0, 10) + "…" + addr.slice(-6);
-}
-function pct(val, total) {
-  if (!total) return "—";
-  return ((val/total)*100).toFixed(1) + "%";
-}
+function truncAddr(a){return a?a.slice(0,10)+"…"+a.slice(-6):"";}
 
 // ── Componentes base ──────────────────────────────────────────
-function Dot({ status }) {
-  const c = { ok:"#3fb950", warn:"#d29922", crit:"#f85149", off:"#4a5260" }[status] || "#4a5260";
-  return <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",flexShrink:0,
-    background:c,boxShadow:status!=="off"?`0 0 6px ${c}`:"none"}}/>;
+function Dot({status,pulse}){
+  const c={ok:"#3fb950",warn:"#d29922",crit:"#f85149",off:"#4a5260"}[status]||"#4a5260";
+  return(<span style={{position:"relative",display:"inline-flex",alignItems:"center",
+    justifyContent:"center",width:10,height:10,flexShrink:0}}>
+    {pulse&&status==="ok"&&<span style={{position:"absolute",inset:0,borderRadius:"50%",
+      background:c,opacity:.4,animation:"ping 1.5s ease-in-out infinite"}}/>}
+    <span style={{width:8,height:8,borderRadius:"50%",background:c,
+      boxShadow:status!=="off"?`0 0 5px ${c}`:"none",position:"relative"}}/>
+  </span>);
 }
 
-function StatRow({ label, value, valueStyle, highlight }) {
-  return (
-    <div className={`row ${highlight?"hl":""}`}>
-      <span className="lbl">{label}</span>
-      <span className="val" style={valueStyle}>{value ?? "—"}</span>
-      <style jsx>{`
-        .row { display:flex; justify-content:space-between; align-items:center;
-               padding:7px 0; border-bottom:1px solid var(--border); }
-        .row:last-child { border-bottom:none; }
-        .row.hl { background:var(--surface2); margin:0 -22px; padding:7px 22px; }
-        .lbl { font-size:.78rem; color:var(--muted); }
-        .val { font-size:.85rem; font-weight:500; font-variant-numeric:tabular-nums; text-align:right; }
-      `}</style>
+function StatRow({label,value,valueStyle,sub}){
+  return(<div className="r">
+    <span className="l">{label}</span>
+    <div style={{textAlign:"right"}}>
+      <span className="v" style={valueStyle}>{value??"—"}</span>
+      {sub&&<div style={{fontSize:".68rem",color:"var(--dim)"}}>{sub}</div>}
     </div>
-  );
+    <style jsx>{`.r{display:flex;justify-content:space-between;align-items:center;
+      padding:7px 0;border-bottom:1px solid var(--border);}
+      .r:last-child{border-bottom:none;}
+      .l{font-size:.78rem;color:var(--muted);}
+      .v{font-size:.84rem;font-weight:500;font-variant-numeric:tabular-nums;}`}</style>
+  </div>);
 }
 
-function Card({ children, style }) {
-  return (
-    <div className="card" style={style}>
-      {children}
-      <style jsx>{`
-        .card { background:var(--surface); border:1px solid var(--border2);
-                border-radius:var(--r); padding:20px 22px; }
-      `}</style>
-    </div>
-  );
+function Card({children,style,glow}){
+  return(<div className={`c${glow?" glow":""}`} style={style}>{children}
+    <style jsx>{`.c{background:var(--surface);border:1px solid var(--border2);
+      border-radius:var(--r);padding:20px 22px;}
+      .glow{border-color:rgba(63,185,80,.3);box-shadow:0 0 20px rgba(63,185,80,.06);}`}</style>
+  </div>);
 }
 
-function SectionTitle({ children }) {
-  return <h2 style={{fontSize:".68rem",fontWeight:600,letterSpacing:".12em",
+function SectionTitle({children}){
+  return <h2 style={{fontSize:".67rem",fontWeight:600,letterSpacing:".12em",
     textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>{children}</h2>;
 }
 
-function Badge({ label, bg, fg }) {
+function Badge({label,bg,fg}){
   return <span style={{display:"inline-block",fontSize:".62rem",fontWeight:700,
     letterSpacing:".08em",textTransform:"uppercase",padding:"3px 9px",
     borderRadius:20,background:bg,color:fg,marginBottom:14}}>{label}</span>;
 }
 
-// ── Tab navigation ────────────────────────────────────────────
-function Tabs({ active, onChange }) {
-  const tabs = [
-    { id:"resumen",  label:"⛏️ Resumen" },
-    { id:"pool",     label:"🌊 Public Pool" },
-    { id:"odds",     label:"🎰 Probabilidad" },
-  ];
-  return (
-    <div className="tabs">
-      {tabs.map(t => (
-        <button key={t.id} className={`tab ${active===t.id?"on":""}`}
-          onClick={() => onChange(t.id)}>{t.label}</button>
-      ))}
-      <style jsx>{`
-        .tabs { display:flex; gap:4px; border-bottom:1px solid var(--border2);
-                padding:0 24px; background:var(--surface); overflow-x:auto; }
-        .tab { background:none; border:none; border-bottom:2px solid transparent;
-               color:var(--muted); padding:14px 16px; font-size:.85rem; cursor:pointer;
-               white-space:nowrap; transition:color .15s, border-color .15s; }
-        .tab.on { color:var(--text); border-bottom-color:var(--green); font-weight:600; }
-        .tab:hover:not(.on) { color:var(--text); }
-      `}</style>
-    </div>
-  );
-}
+// ── Gauge de temperatura ──────────────────────────────────────
+function TempGauge({temp,warn=68,crit=75}){
+  const max=100, pct=Math.min(temp/max,1);
+  const color=temp>=crit?"#f85149":temp>=warn?"#d29922":"#3fb950";
+  const r=42, cx=54, cy=54;
+  const arc=Math.PI*1.3;
+  const startAngle=-Math.PI*0.15-Math.PI;
+  const endAngle=startAngle+arc*pct;
+  const x1=cx+r*Math.cos(startAngle-Math.PI/2+Math.PI);
+  const y1=cy+r*Math.sin(startAngle-Math.PI/2+Math.PI);
+  const x2=cx+r*Math.cos(endAngle-Math.PI/2+Math.PI);
+  const y2=cy+r*Math.sin(endAngle-Math.PI/2+Math.PI);
+  const large=arc*pct>Math.PI?1:0;
 
-// ── Tab: Resumen ──────────────────────────────────────────────
-function TabResumen({ data }) {
-  const { miners=[], publicPool, ckpool, netDiffFmt, odds } = data;
-  const pp = publicPool?.online ? publicPool : null;
-
-  return (
-    <div className="wrap">
-      {/* KPIs rápidos */}
-      <div className="kpis">
-        <div className="kpi">
-          <div className="kpi-label">HASHRATE AHORA</div>
-          <div className="kpi-val green">{pp ? pp.hashFmt10m : "—"}</div>
-          <div className="kpi-sub">Último 10 min · public-pool</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">HASHRATE 1H</div>
-          <div className="kpi-val">{pp ? pp.hashFmt1h : "—"}</div>
-          <div className="kpi-sub">Promedio última hora</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">MEJOR SHARE</div>
-          <div className="kpi-val gold">{pp ? pp.bestEverFmt : "—"}</div>
-          <div className="kpi-sub">Histórico all-time</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">DIFICULTAD RED</div>
-          <div className="kpi-val">{netDiffFmt || "—"}</div>
-          <div className="kpi-sub">Bitcoin mainnet</div>
+  // Simple CSS gauge instead
+  const angle=temp>=crit?"-60deg":temp>=warn?"-20deg":"20deg";
+  return(
+    <div style={{textAlign:"center",padding:"4px 0 8px"}}>
+      <div style={{position:"relative",display:"inline-block"}}>
+        <svg width={108} height={70} viewBox="0 0 108 70">
+          {/* Track */}
+          <path d="M14 62 A40 40 0 0 1 94 62" fill="none" stroke="var(--border2)" strokeWidth={8} strokeLinecap="round"/>
+          {/* Fill */}
+          <path d={`M14 62 A40 40 0 ${temp>=50?1:0} 1 ${14+80*(temp/100)} ${62-Math.sin(Math.acos((14+80*(temp/100)-54)/40))*40}`}
+            fill="none" stroke={color} strokeWidth={8} strokeLinecap="round"
+            style={{filter:`drop-shadow(0 0 4px ${color})`}}/>
+          {/* Needle approx */}
+        </svg>
+        <div style={{position:"absolute",bottom:0,left:"50%",transform:"translateX(-50%)",
+          textAlign:"center",lineHeight:1}}>
+          <div style={{fontSize:"1.7rem",fontWeight:800,color,
+            fontVariantNumeric:"tabular-nums",letterSpacing:"-.03em"}}>{temp}°</div>
+          <div style={{fontSize:".65rem",color:"var(--dim)",marginTop:2}}>ASIC temp</div>
         </div>
       </div>
-
-      {/* Hardware */}
-      {miners.length > 0 && (
-        <section>
-          <SectionTitle>Equipos · Hardware</SectionTitle>
-          <div className="grid g2">
-            {miners.map((m,i) => <MinerCard key={i} m={m}/>)}
-          </div>
-        </section>
-      )}
-
-      {/* Pool resumen */}
-      {pp && (
-        <section>
-          <SectionTitle>Pool · Actividad reciente</SectionTitle>
-          <Card>
-            <Badge label="public-pool.io" bg="var(--blue-bg)" fg="var(--blue)"/>
-            <div className="grid g3">
-              <StatRow label="Workers activos"     value={pp.workerCount}/>
-              <StatRow label="Shares totales"      value={pp.shares?.toLocaleString("es-CO")}/>
-              <StatRow label="Shares (10 min)"     value={pp.sharesLast10m}/>
-              <StatRow label="Shares (1 hora)"     value={pp.sharesLastHour}/>
-              <StatRow label="Última share"        value={timeAgo(pp.minsSinceShare)}
-                valueStyle={pp.minsSinceShare>15?{color:"var(--red)"}:{color:"var(--green)"}}/>
-              <StatRow label="Candidatos de bloque" value={pp.blockCandidates}/>
-            </div>
-          </Card>
-        </section>
-      )}
-
-      {/* Odds resumen */}
-      {odds && (
-        <section>
-          <SectionTitle>Probabilidad · Vista rápida</SectionTitle>
-          <OddsCard odds={odds} netDiffFmt={netDiffFmt} compact/>
-        </section>
-      )}
-
-      <style jsx>{`
-        .wrap { display:flex; flex-direction:column; gap:28px; }
-        .kpis { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; }
-        .kpi { background:var(--surface); border:1px solid var(--border2);
-               border-radius:var(--r); padding:18px 20px; }
-        .kpi-label { font-size:.62rem; font-weight:600; letter-spacing:.1em;
-                     text-transform:uppercase; color:var(--dim); margin-bottom:6px; }
-        .kpi-val { font-size:1.6rem; font-weight:800; letter-spacing:-.03em;
-                   font-variant-numeric:tabular-nums; color:var(--text); }
-        .kpi-val.green { color:var(--green); }
-        .kpi-val.gold  { color:var(--gold); }
-        .kpi-sub { font-size:.7rem; color:var(--dim); margin-top:4px; }
-        section { display:flex; flex-direction:column; gap:0; }
-        .grid { display:grid; gap:12px; }
-        .g2 { grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); }
-        .g3 { grid-template-columns:1fr; }
-      `}</style>
     </div>
   );
 }
 
-// ── Tab: Public Pool ──────────────────────────────────────────
-function TabPool({ data }) {
-  const pp = data.publicPool;
-  const addr = data.address;
-
-  if (!pp?.online) return (
-    <Card><p style={{color:"var(--muted)",padding:"12px 0"}}>Sin datos de public-pool todavía.<br/>
-    <small style={{color:"var(--dim)"}}>{pp?.error}</small></p></Card>
-  );
-
-  const { hashFmt10m, hashFmt1h, workerCount, shares, sharesLast10m, sharesLastHour,
-          bestEverFmt, minsSinceShare, blockCandidates, blockProgressPct, workers } = pp;
-
-  return (
-    <div className="wrap">
-      <div className="grid g2">
-        {/* Hashrate */}
-        <Card>
-          <Badge label="public-pool.io" bg="var(--blue-bg)" fg="var(--blue)"/>
-          <div className="big-hr">{hashFmt10m}</div>
-          <div className="big-sub">Hashrate últimos 10 min</div>
-          <div style={{height:12}}/>
-          <StatRow label="Hashrate 1 hora"    value={hashFmt1h}/>
-          <StatRow label="Workers activos"    value={workerCount}/>
-          <StatRow label="Candidatos bloque"  value={blockCandidates}/>
-        </Card>
-
-        {/* Shares */}
-        <Card>
-          <div className="sec-title">Actividad de shares</div>
-          <StatRow label="Total histórico"     value={shares?.toLocaleString("es-CO")} highlight/>
-          <StatRow label="Últimos 10 min"      value={sharesLast10m}/>
-          <StatRow label="Última hora"         value={sharesLastHour}/>
-          <StatRow label="Última share"
-            value={timeAgo(minsSinceShare)}
-            valueStyle={minsSinceShare>15?{color:"var(--red)"}:{color:"var(--green)"}}/>
-          <StatRow label="Mejor share histórica" value={<span style={{color:"var(--gold)",fontWeight:700}}>{bestEverFmt}</span>}/>
-          {blockProgressPct && <StatRow label="% hacia un bloque" value={blockProgressPct+"%"}/>}
-        </Card>
-      </div>
-
-      {/* Workers */}
-      {workers?.length > 0 && (
-        <Card>
-          <div className="sec-title">Workers conectados</div>
-          <div className="workers-table">
-            <div className="wh">Worker</div>
-            <div className="wh">Hashrate</div>
-            <div className="wh">Mejor share</div>
-            <div className="wh">Última share</div>
-            <div className="wh">Modo</div>
-            {workers.map((w,i) => (
-              <>
-                <div key={`n${i}`} className="wc name">{w.name}</div>
-                <div key={`h${i}`} className="wc green">{w.hashFmt}</div>
-                <div key={`b${i}`} className="wc gold">{w.bestEverFmt}</div>
-                <div key={`s${i}`} className="wc"
-                  style={w.minsSinceShare>15?{color:"var(--red)"}:{}}>{timeAgo(w.minsSinceShare)}</div>
-                <div key={`m${i}`} className="wc dim">{w.payoutMode}</div>
-              </>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {/* Link directo */}
-      <Card>
-        <div className="sec-title">Ver en public-pool.io</div>
-        <p style={{fontSize:".82rem",color:"var(--muted)",marginBottom:14}}>
-          Abre la interfaz completa de public-pool con tu dirección BTC.
-        </p>
-        <a href={`https://web.public-pool.io/#/app/${addr}`} target="_blank" rel="noreferrer"
-          className="ext-btn">
-          Abrir public-pool.io →
-        </a>
-      </Card>
-
-      <style jsx>{`
-        .wrap { display:flex; flex-direction:column; gap:16px; }
-        .grid { display:grid; gap:14px; }
-        .g2 { grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
-        .big-hr { font-size:2.2rem; font-weight:800; letter-spacing:-.04em;
-                  color:var(--blue); font-variant-numeric:tabular-nums; margin-bottom:4px; }
-        .big-sub { font-size:.72rem; color:var(--dim); margin-bottom:8px; }
-        .sec-title { font-size:.68rem; font-weight:600; letter-spacing:.1em;
-                     text-transform:uppercase; color:var(--dim); margin-bottom:14px; }
-        .workers-table { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr; gap:0; }
-        .wh { font-size:.65rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
-              color:var(--dim); padding:6px 8px 10px 0; border-bottom:1px solid var(--border2); }
-        .wc { font-size:.82rem; padding:8px 8px 8px 0; border-bottom:1px solid var(--border);
-              font-variant-numeric:tabular-nums; color:var(--text); }
-        .wc:last-of-type { border-bottom:none; }
-        .wc.green { color:var(--green); font-weight:600; }
-        .wc.gold  { color:var(--gold); }
-        .wc.dim   { color:var(--dim); font-size:.75rem; }
-        .wc.name  { font-weight:600; }
-        .ext-btn {
-          display:inline-block; background:var(--blue-bg); color:var(--blue);
-          border:1px solid var(--blue); padding:10px 20px; border-radius:var(--r-sm);
-          font-size:.85rem; font-weight:600; text-decoration:none;
-          transition:opacity .15s;
-        }
-        .ext-btn:hover { opacity:.8; text-decoration:none; }
-      `}</style>
+// ── Barra de progreso ─────────────────────────────────────────
+function Bar({value,max,color="var(--green)",label,unit=""}){
+  const pct=Math.min((value/max)*100,100);
+  return(<div style={{marginBottom:10}}>
+    <div style={{display:"flex",justifyContent:"space-between",
+      fontSize:".72rem",color:"var(--muted)",marginBottom:4}}>
+      <span>{label}</span><span style={{color:"var(--text)",fontWeight:600}}>{value}{unit}</span>
     </div>
-  );
+    <div style={{height:5,background:"var(--border2)",borderRadius:3,overflow:"hidden"}}>
+      <div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:3,
+        transition:"width .5s ease",boxShadow:`0 0 6px ${color}40`}}/>
+    </div>
+  </div>);
 }
 
-// ── Tab: Probabilidad ─────────────────────────────────────────
-function TabOdds({ data }) {
-  const { odds, netDiffFmt, publicPool } = data;
-  if (!odds) return <Card><p style={{color:"var(--muted)",padding:"12px 0"}}>
-    Sin datos suficientes para calcular probabilidades.</p></Card>;
-
-  const { oneInDays, years, perDay } = odds;
-  const hps = publicPool?.online ? (publicPool.hashHps10m || publicPool.hashHps1h) : 0;
-
-  // Tabla de probabilidades acumuladas
-  const periods = [
-    { label:"1 día",    days:1 },
-    { label:"1 semana", days:7 },
-    { label:"1 mes",    days:30 },
-    { label:"3 meses",  days:90 },
-    { label:"6 meses",  days:180 },
-    { label:"1 año",    days:365 },
-    { label:"5 años",   days:1825 },
-    { label:"10 años",  days:3650 },
-  ].map(p => ({
-    ...p,
-    prob: (1 - Math.pow(1 - perDay, p.days)) * 100,
-  }));
-
-  return (
-    <div className="wrap">
-      {/* Número grande */}
-      <Card>
-        <div className="big-wrap">
-          <div>
-            <div className="odds-label">PROBABILIDAD POR DÍA</div>
-            <div className="odds-num">1 / {oneInDays.toLocaleString("es-CO")}</div>
-            <div className="odds-sub">Con {fmtHR(hps)} de hashrate</div>
-          </div>
-          <div className="years-box">
-            <div className="years-num">~{Math.round(years).toLocaleString("es-CO")}</div>
-            <div className="years-lbl">años promedio</div>
-          </div>
-        </div>
-        <div className="disclaimer">
-          ⚡ Esto es estadística pura — podrías ganar mañana o nunca.
-          El premio actual es ~3.125 BTC por bloque.
-        </div>
-      </Card>
-
-      {/* Tabla acumulada */}
-      <Card>
-        <div className="sec-title">Probabilidad acumulada por período</div>
-        <div className="prob-table">
-          <div className="ph">Período</div>
-          <div className="ph">% de ganar</div>
-          <div className="ph">1 en...</div>
-          {periods.map((p,i) => {
-            const pctVal = p.prob;
-            const barW = Math.min(pctVal * 3, 100);
-            const color = pctVal > 50 ? "var(--green)" : pctVal > 10 ? "var(--yellow)" : "var(--blue)";
-            return (
-              <>
-                <div key={`l${i}`} className="pc">{p.label}</div>
-                <div key={`p${i}`} className="pc">
-                  <div className="bar-wrap">
-                    <div className="bar" style={{width:`${barW}%`,background:color}}/>
-                    <span style={{color}}>{pctVal < 0.01 ? pctVal.toExponential(2) : pctVal.toFixed(2)}%</span>
-                  </div>
-                </div>
-                <div key={`o${i}`} className="pc dim">
-                  1 en {Math.round(1/(p.prob/100)).toLocaleString("es-CO")}
-                </div>
-              </>
-            );
-          })}
-        </div>
-      </Card>
-
-      {/* Info de contexto */}
-      <Card>
-        <div className="sec-title">Contexto de la red</div>
-        <StatRow label="Dificultad de red"         value={netDiffFmt}/>
-        <StatRow label="Hashrate usado para cálculo" value={fmtHR(hps)}/>
-        <StatRow label="Mejor share histórica"      value={<span style={{color:"var(--gold)"}}>{publicPool?.bestEverFmt}</span>}/>
-        <StatRow label="Premio por bloque"          value="~3.125 BTC"/>
-        <StatRow label="% de la dificultad alcanzado"
-          value={publicPool?.online && data.netDiff && publicPool.bestEver
-            ? ((publicPool.bestEver / data.netDiff) * 100).toExponential(3) + "%"
-            : "—"}/>
-      </Card>
-
-      <style jsx>{`
-        .wrap { display:flex; flex-direction:column; gap:16px; }
-        .big-wrap { display:flex; justify-content:space-between; align-items:center;
-                    gap:20px; flex-wrap:wrap; margin-bottom:16px; }
-        .odds-label { font-size:.62rem; font-weight:600; letter-spacing:.1em;
-                      text-transform:uppercase; color:var(--dim); margin-bottom:6px; }
-        .odds-num { font-size:2.4rem; font-weight:800; letter-spacing:-.04em;
-                    color:var(--gold); font-variant-numeric:tabular-nums; }
-        .odds-sub { font-size:.72rem; color:var(--dim); margin-top:4px; }
-        .years-box { text-align:center; background:var(--surface2);
-                     border:1px solid var(--border2); border-radius:var(--r);
-                     padding:16px 24px; }
-        .years-num { font-size:2rem; font-weight:800; color:var(--text);
-                     font-variant-numeric:tabular-nums; }
-        .years-lbl { font-size:.72rem; color:var(--dim); margin-top:2px; }
-        .disclaimer { font-size:.75rem; color:var(--dim); line-height:1.6;
-                      padding:12px 14px; background:var(--surface2); border-radius:var(--r-sm); }
-        .sec-title { font-size:.68rem; font-weight:600; letter-spacing:.1em;
-                     text-transform:uppercase; color:var(--dim); margin-bottom:14px; }
-        .prob-table { display:grid; grid-template-columns:1fr 2fr 1fr; gap:0; }
-        .ph { font-size:.65rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
-              color:var(--dim); padding:6px 8px 10px 0; border-bottom:1px solid var(--border2); }
-        .pc { font-size:.82rem; padding:9px 8px 9px 0; border-bottom:1px solid var(--border);
-              font-variant-numeric:tabular-nums; color:var(--text); display:flex; align-items:center; }
-        .pc.dim { color:var(--muted); }
-        .bar-wrap { display:flex; align-items:center; gap:8px; width:100%; }
-        .bar { height:6px; border-radius:3px; min-width:2px; flex-shrink:0; }
-      `}</style>
-    </div>
-  );
+// ── Tabs ──────────────────────────────────────────────────────
+function Tabs({active,onChange}){
+  const T=[{id:"resumen",label:"⛏️ Resumen"},{id:"hardware",label:"🖥 Hardware"},
+           {id:"pool",label:"🌊 Pool"},{id:"odds",label:"🎰 Probabilidad"}];
+  return(<div className="tabs">
+    {T.map(t=><button key={t.id} className={`tab${active===t.id?" on":""}`}
+      onClick={()=>onChange(t.id)}>{t.label}</button>)}
+    <style jsx>{`.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border2);
+      padding:0 24px;background:var(--surface);overflow-x:auto;scrollbar-width:none;}
+      .tab{background:none;border:none;border-bottom:2px solid transparent;
+        color:var(--muted);padding:13px 16px;font-size:.84rem;cursor:pointer;white-space:nowrap;
+        transition:color .15s,border-color .15s;}
+      .tab.on{color:var(--text);border-bottom-color:var(--green);font-weight:600;}
+      .tab:hover:not(.on){color:var(--text);}`}</style>
+  </div>);
 }
 
-// ── Card: minero ──────────────────────────────────────────────
-function MinerCard({ m }) {
-  const status = !m.online ? "off" : m.temp >= 75 ? "crit" : m.temp >= 68 ? "warn" : "ok";
-  const tempColor = { crit:"var(--red)", warn:"var(--yellow)" }[status] || "var(--text)";
+// ── Tab Hardware ──────────────────────────────────────────────
+function TabHardware({miners}){
+  if(!miners?.length) return <Card><p style={{color:"var(--muted)",padding:12}}>
+    No hay mineros configurados.</p></Card>;
 
-  return (
-    <div className="card">
-      <div className="head">
-        <div className="name-row"><Dot status={status}/><span className="name">{m.name}</span></div>
-        {m.online && <span className="model">{m.model}</span>}
-      </div>
-
-      {!m.online ? (
-        <div className="offline-box">
-          <div className="offline-icon">📡</div>
-          <div className="offline-title">Minero no alcanzable desde la nube</div>
-          <div className="offline-text">
-            La IP <code>{m.url || "192.168.11.48"}</code> es local. Para ver temperatura
-            y hardware en tiempo real, instala <strong>Tailscale</strong> en tu router.
-          </div>
-          <div className="offline-text" style={{marginTop:6,color:"var(--green)"}}>
-            ✅ Los datos del pool sí funcionan desde cualquier lugar.
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="hashrate">{m.hashFmt}</div>
-          <StatRow label="Temperatura chip" value={`${m.temp}°C`} valueStyle={{color:tempColor}}/>
-          <StatRow label="Temperatura VR"   value={`${m.vrTemp}°C`}/>
-          <StatRow label="Potencia"         value={`${m.power?.toFixed(0)} W`}/>
-          <StatRow label="Ventilador"       value={`${m.fanrpm?.toLocaleString()} rpm`}/>
-          <StatRow label="Mejor share"      value={m.bestDiff}/>
-          <StatRow label="Shares aceptadas" value={m.sharesAccepted?.toLocaleString()}/>
-          <StatRow label="Frecuencia"       value={`${m.frequency} MHz`}/>
-          <StatRow label="Uptime"           value={m.uptimeFmt}/>
-        </>
-      )}
-      <style jsx>{`
-        .card { background:var(--surface); border:1px solid var(--border2);
-                border-radius:var(--r); padding:20px 22px; }
-        .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
-        .name-row { display:flex; align-items:center; gap:8px; }
-        .name { font-size:.95rem; font-weight:600; }
-        .model { font-size:.7rem; color:var(--dim); }
-        .hashrate { font-size:2rem; font-weight:800; letter-spacing:-.04em;
-                    color:var(--green); margin-bottom:14px; font-variant-numeric:tabular-nums; }
-        .offline-box { background:var(--surface2); border-radius:var(--r-sm);
-                       padding:16px; border:1px solid var(--border2); }
-        .offline-icon { font-size:1.6rem; margin-bottom:8px; }
-        .offline-title { font-size:.85rem; font-weight:600; margin-bottom:6px; color:var(--muted); }
-        .offline-text { font-size:.75rem; color:var(--dim); line-height:1.6; }
-        code { background:var(--surface3); padding:1px 5px; border-radius:4px;
-               font-size:.72rem; color:var(--text); }
-      `}</style>
-    </div>
-  );
+  return(<div style={{display:"flex",flexDirection:"column",gap:20}}>
+    {miners.map((m,i)=><MinerCardFull key={i} m={m}/>)}
+  </div>);
 }
 
-// ── Card: odds compacto ───────────────────────────────────────
-function OddsCard({ odds, netDiffFmt, compact }) {
-  if (!odds) return null;
-  const { oneInDays, years, perDay } = odds;
-  return (
+function MinerCardFull({m}){
+  const status=!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok";
+  const statusLabel={ok:"Activo",warn:"Temperatura alta",crit:"¡CRÍTICO!",off:"Sin conexión"}[status];
+  const statusColor={ok:"var(--green)",warn:"var(--yellow)",crit:"var(--red)",off:"var(--dim)"}[status];
+  const shareTotal=(m.sharesAccepted||0)+(m.sharesRejected||0);
+  const acceptRate=shareTotal>0?(m.sharesAccepted/shareTotal*100).toFixed(1):null;
+
+  if(!m.online) return(
     <Card>
-      <div className="row">
-        <div>
-          <div className="lbl">POR DÍA</div>
-          <div className="num">1 / {oneInDays.toLocaleString("es-CO")}</div>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+        <Dot status="off"/><span style={{fontWeight:700,fontSize:"1rem"}}>{m.name}</span>
+        <span style={{fontSize:".75rem",color:"var(--red)",background:"var(--red-bg)",
+          padding:"2px 8px",borderRadius:20}}>Sin conexión</span>
+      </div>
+      <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
+        borderRadius:10,padding:20,textAlign:"center"}}>
+        <div style={{fontSize:"2rem",marginBottom:12}}>📡</div>
+        <div style={{fontWeight:600,color:"var(--muted)",marginBottom:8}}>
+          Hardware no alcanzable desde la nube
         </div>
-        <div style={{textAlign:"right"}}>
-          <div className="lbl">PROMEDIO</div>
-          <div className="num2">~{Math.round(years).toLocaleString("es-CO")} años</div>
+        <div style={{fontSize:".78rem",color:"var(--dim)",lineHeight:1.7,maxWidth:400,margin:"0 auto"}}>
+          La IP <code style={{background:"var(--surface3)",padding:"1px 5px",
+          borderRadius:4,fontSize:".72rem"}}>{m.url||"local"}</code> está en tu red
+          local. Para ver temperatura, fan y estado en tiempo real desde cualquier lugar,
+          necesitas configurar un <strong style={{color:"var(--text)"}}>tunnel de Cloudflare</strong>.
+        </div>
+        <div style={{marginTop:14,fontSize:".75rem",color:"var(--green)"}}>
+          ✅ Los datos del pool funcionan sin problema
         </div>
       </div>
-      {!compact && <>
-        <StatRow label="% de chance por día" value={`${(perDay*100).toExponential(2)}%`}/>
-        <StatRow label="Premio estimado"      value={<span style={{color:"var(--gold)"}}>~3.125 BTC 🍀</span>}/>
-        <StatRow label="Dificultad de red"    value={netDiffFmt}/>
-      </>}
-      <style jsx>{`
-        .row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
-        .lbl { font-size:.62rem; font-weight:600; letter-spacing:.1em;
-               text-transform:uppercase; color:var(--dim); margin-bottom:4px; }
-        .num { font-size:1.8rem; font-weight:800; color:var(--gold);
-               letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
-        .num2 { font-size:1.2rem; font-weight:700; color:var(--text);
-                font-variant-numeric:tabular-nums; }
-      `}</style>
+    </Card>
+  );
+
+  return(
+    <Card glow={status==="ok"}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",
+        alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <Dot status={status} pulse/>
+          <div>
+            <div style={{fontWeight:700,fontSize:"1rem"}}>{m.name}</div>
+            <div style={{fontSize:".72rem",color:"var(--dim)"}}>{m.model}</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:".75rem",fontWeight:600,color:statusColor,
+            background:`${statusColor}20`,padding:"4px 12px",borderRadius:20,
+            border:`1px solid ${statusColor}40`}}>{statusLabel}</span>
+          <span style={{fontSize:".72rem",color:"var(--dim)"}}>Up: {m.uptimeFmt}</span>
+        </div>
+      </div>
+
+      {/* Grid principal */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",
+        gap:16,marginBottom:20}}>
+
+        {/* Hashrate */}
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
+          borderRadius:10,padding:16}}>
+          <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:8}}>Hashrate</div>
+          <div style={{fontSize:"2rem",fontWeight:800,color:"var(--green)",
+            letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>{m.hashFmt}</div>
+          <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:4}}>
+            Frecuencia: {m.frequency} MHz
+          </div>
+        </div>
+
+        {/* Temperatura gauge */}
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
+          borderRadius:10,padding:16}}>
+          <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>Temperatura</div>
+          <TempGauge temp={m.temp}/>
+          <div style={{display:"flex",justifyContent:"space-between",
+            fontSize:".72rem",color:"var(--dim)",marginTop:4}}>
+            <span>VR: {m.vrTemp}°C</span>
+            <span>Límite: 75°C</span>
+          </div>
+        </div>
+
+        {/* Potencia y fan */}
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
+          borderRadius:10,padding:16}}>
+          <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Potencia · Ventilador</div>
+          <Bar value={m.power?.toFixed(0)||0} max={30} color="var(--blue)" label="Potencia" unit=" W"/>
+          <Bar value={m.fanrpm||0} max={6000} color="var(--muted)" label="Ventilador" unit=" rpm"/>
+          <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:8}}>
+            Eficiencia: {m.power&&m.hashHps
+              ? ((m.power/(m.hashHps/1e12)).toFixed(1))+" J/TH" : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Shares */}
+      <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
+        borderRadius:10,padding:16,marginBottom:16}}>
+        <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
+          textTransform:"uppercase",color:"var(--dim)",marginBottom:12}}>Shares</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
+          <div>
+            <div style={{fontSize:"1.5rem",fontWeight:800,color:"var(--green)",
+              fontVariantNumeric:"tabular-nums"}}>{m.sharesAccepted?.toLocaleString()}</div>
+            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Aceptadas</div>
+          </div>
+          <div>
+            <div style={{fontSize:"1.5rem",fontWeight:800,color:m.sharesRejected>0?"var(--red)":"var(--text)",
+              fontVariantNumeric:"tabular-nums"}}>{m.sharesRejected?.toLocaleString()||0}</div>
+            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Rechazadas</div>
+          </div>
+          <div>
+            <div style={{fontSize:"1.5rem",fontWeight:800,color:"var(--gold)",
+              fontVariantNumeric:"tabular-nums"}}>{m.bestDiff}</div>
+            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Mejor share</div>
+          </div>
+          {acceptRate&&<div>
+            <div style={{fontSize:"1.5rem",fontWeight:800,color:"var(--green)",
+              fontVariantNumeric:"tabular-nums"}}>{acceptRate}%</div>
+            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Tasa aceptación</div>
+          </div>}
+        </div>
+        {acceptRate&&<div style={{marginTop:12}}>
+          <Bar value={parseFloat(acceptRate)} max={100} color="var(--green)" label="Aceptación"/>
+        </div>}
+      </div>
+
+      {/* Stratum */}
+      <div style={{fontSize:".72rem",color:"var(--dim)",display:"flex",
+        alignItems:"center",gap:6}}>
+        <span style={{color:"var(--green)"}}>●</span>
+        Conectado a: <span style={{color:"var(--text)",fontFamily:"monospace"}}>{m.stratumURL}</span>
+      </div>
     </Card>
   );
 }
 
-// ── Dashboard principal ───────────────────────────────────────
-export default function Dashboard() {
-  const router = useRouter();
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [countdown, setCountdown] = useState(REFRESH);
-  const [tab, setTab] = useState("resumen");
-  const timerRef = useRef(null);
-  const cdRef    = useRef(null);
+// ── Tab Resumen ───────────────────────────────────────────────
+function TabResumen({data}){
+  const {miners=[],publicPool:pp,netDiffFmt,odds}=data;
+  const onlineMiners=miners.filter(m=>m.online);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await fetch("/api/status");
-      if (res.status === 401) { router.replace("/"); return; }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return(<div style={{display:"flex",flexDirection:"column",gap:24}}>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(175px,1fr))",gap:12}}>
+      {[
+        {label:"HASHRATE AHORA",val:pp?.hashFmt10m||"—",sub:"Pool · 10 min",color:"var(--green)"},
+        {label:"HASHRATE 1H",val:pp?.hashFmt1h||"—",sub:"Promedio hora",color:"var(--text)"},
+        {label:"MEJOR SHARE",val:pp?.bestEverFmt||"—",sub:"All-time",color:"var(--gold)"},
+        {label:"DIFICULTAD RED",val:netDiffFmt||"—",sub:"Bitcoin mainnet",color:"var(--text)"},
+      ].map((k,i)=>(
+        <div key={i} style={{background:"var(--surface)",border:"1px solid var(--border2)",
+          borderRadius:"var(--r)",padding:"16px 20px"}}>
+          <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>{k.label}</div>
+          <div style={{fontSize:"1.5rem",fontWeight:800,letterSpacing:"-.03em",
+            color:k.color,fontVariantNumeric:"tabular-nums"}}>{k.val}</div>
+          <div style={{fontSize:".68rem",color:"var(--dim)",marginTop:3}}>{k.sub}</div>
+        </div>
+      ))}
+    </div>
+
+    {/* Estado mineros */}
+    <section>
+      <SectionTitle>Estado de equipos</SectionTitle>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+        {miners.map((m,i)=>(
+          <Card key={i} glow={m.online}>
+            <div style={{display:"flex",justifyContent:"space-between",
+              alignItems:"center",marginBottom:m.online?14:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <Dot status={!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok"} pulse={m.online}/>
+                <div>
+                  <div style={{fontWeight:600}}>{m.name}</div>
+                  {m.online&&<div style={{fontSize:".7rem",color:"var(--dim)"}}>{m.model}</div>}
+                </div>
+              </div>
+              {m.online&&<div style={{fontSize:"1.3rem",fontWeight:800,color:"var(--green)",
+                fontVariantNumeric:"tabular-nums"}}>{m.hashFmt}</div>}
+            </div>
+            {m.online?(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[
+                  {l:"Temp",v:`${m.temp}°C`,c:m.temp>=75?"var(--red)":m.temp>=68?"var(--yellow)":"var(--green)"},
+                  {l:"Potencia",v:`${m.power?.toFixed(0)}W`,c:"var(--text)"},
+                  {l:"Fan",v:`${m.fanrpm?.toLocaleString()}`,c:"var(--text)"},
+                ].map((s,j)=>(
+                  <div key={j} style={{background:"var(--surface2)",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:".65rem",color:"var(--dim)",marginBottom:2}}>{s.l}</div>
+                    <div style={{fontSize:".9rem",fontWeight:700,color:s.c,fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+                  </div>
+                ))}
+              </div>
+            ):(
+              <div style={{fontSize:".78rem",color:"var(--red)"}}>
+                Sin conexión — ver tab Hardware para detalles
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+    </section>
+
+    {/* Pool resumen */}
+    {pp?.online&&(
+      <section>
+        <SectionTitle>Pool · Actividad</SectionTitle>
+        <Card>
+          <Badge label="public-pool.io" bg="var(--blue-bg)" fg="var(--blue)"/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:0}}>
+            <StatRow label="Workers activos"  value={pp.workerCount}/>
+            <StatRow label="Shares totales"   value={pp.shares?.toLocaleString("es-CO")}/>
+            <StatRow label="Shares (10 min)"  value={pp.sharesLast10m}/>
+            <StatRow label="Shares (1 hora)"  value={pp.sharesLastHour}/>
+            <StatRow label="Última share"     value={timeAgo(pp.minsSinceShare)}
+              valueStyle={pp.minsSinceShare>15?{color:"var(--red)"}:{color:"var(--green)"}}/>
+            <StatRow label="Candidatos bloque" value={pp.blockCandidates||0}/>
+          </div>
+        </Card>
+      </section>
+    )}
+
+    {/* Odds rápido */}
+    {odds&&(
+      <section>
+        <SectionTitle>Probabilidad de bloque</SectionTitle>
+        <Card>
+          <div style={{display:"flex",justifyContent:"space-between",
+            alignItems:"center",flexWrap:"wrap",gap:16}}>
+            <div>
+              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
+                textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>POR DÍA</div>
+              <div style={{fontSize:"2rem",fontWeight:800,color:"var(--gold)",
+                letterSpacing:"-.03em",fontVariantNumeric:"tabular-nums"}}>
+                1 / {odds.oneInDays.toLocaleString("es-CO")}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
+                textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>PROMEDIO EST.</div>
+              <div style={{fontSize:"1.4rem",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+                ~{Math.round(odds.years).toLocaleString("es-CO")} años</div>
+            </div>
+            <a href="#" onClick={e=>{e.preventDefault();}} style={{fontSize:".8rem",color:"var(--blue)"}}>
+              Ver análisis completo →
+            </a>
+          </div>
+        </Card>
+      </section>
+    )}
+  </div>);
+}
+
+// ── Tab Pool ──────────────────────────────────────────────────
+function TabPool({data}){
+  const {publicPool:pp,ckpool,netDiffFmt,address}=data;
+  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
+    {/* Public pool */}
+    {pp?.online?(
+      <>
+        <Card>
+          <Badge label="public-pool.io" bg="var(--blue-bg)" fg="var(--blue)"/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:16,marginBottom:16}}>
+            <div>
+              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
+                textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>HASHRATE 10 MIN</div>
+              <div style={{fontSize:"2.2rem",fontWeight:800,color:"var(--blue)",
+                letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>{pp.hashFmt10m}</div>
+            </div>
+            <div>
+              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
+                textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>HASHRATE 1 HORA</div>
+              <div style={{fontSize:"2.2rem",fontWeight:800,color:"var(--text)",
+                letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>{pp.hashFmt1h}</div>
+            </div>
+          </div>
+          <StatRow label="Workers activos"      value={pp.workerCount}/>
+          <StatRow label="Shares totales"       value={pp.shares?.toLocaleString("es-CO")}/>
+          <StatRow label="Shares (10 min)"      value={pp.sharesLast10m}/>
+          <StatRow label="Shares (1 hora)"      value={pp.sharesLastHour}/>
+          <StatRow label="Mejor share histórica" value={<span style={{color:"var(--gold)",fontWeight:700}}>{pp.bestEverFmt}</span>}/>
+          <StatRow label="Última share"          value={timeAgo(pp.minsSinceShare)}
+            valueStyle={pp.minsSinceShare>15?{color:"var(--red)"}:{color:"var(--green)"}}/>
+          <StatRow label="Candidatos de bloque"  value={pp.blockCandidates||0}/>
+          <StatRow label="Dificultad de red"     value={netDiffFmt||"—"}/>
+          {pp.blockProgressPct&&<StatRow label="% hacia un bloque" value={pp.blockProgressPct+"%"}/>}
+        </Card>
+
+        {/* Workers */}
+        {pp.workers?.length>0&&(
+          <Card>
+            <div style={{fontSize:".67rem",fontWeight:600,letterSpacing:".1em",
+              textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Workers</div>
+            {pp.workers.map((w,i)=>(
+              <div key={i} style={{display:"grid",
+                gridTemplateColumns:"2fr 1fr 1fr 1fr 80px",gap:8,
+                padding:"10px 0",borderBottom:"1px solid var(--border)",
+                fontSize:".82rem",alignItems:"center"}}>
+                <div style={{fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                  <Dot status="ok" pulse/>{w.name}
+                </div>
+                <div style={{color:"var(--green)",fontWeight:600,
+                  fontVariantNumeric:"tabular-nums"}}>{w.hashFmt}</div>
+                <div style={{color:"var(--gold)",fontVariantNumeric:"tabular-nums"}}>{w.bestEverFmt}</div>
+                <div style={{color:w.minsSinceShare>15?"var(--red)":"var(--muted)"}}>
+                  {timeAgo(w.minsSinceShare)}</div>
+                <div style={{fontSize:".7rem",color:"var(--dim)",background:"var(--surface2)",
+                  padding:"2px 7px",borderRadius:10,textAlign:"center"}}>{w.payoutMode}</div>
+              </div>
+            ))}
+          </Card>
+        )}
+      </>
+    ):(
+      <Card><p style={{color:"var(--muted)",padding:12}}>Sin datos de public-pool todavía.<br/>
+        <small style={{color:"var(--dim)"}}>{pp?.error}</small></p></Card>
+    )}
+
+    {/* ckpool */}
+    <Card>
+      <Badge label="solo.ckpool.org" bg="var(--green-bg)" fg="var(--green)"/>
+      {ckpool?.online?(
+        <>
+          <StatRow label="Hashrate 5m"    value={ckpool.hashFmt5m}/>
+          <StatRow label="Hashrate 1d"    value={ckpool.hashFmt1d}/>
+          <StatRow label="Workers"        value={ckpool.workerCount}/>
+          <StatRow label="Mejor share"    value={<span style={{color:"var(--gold)"}}>{ckpool.bestEverFmt}</span>}/>
+          <StatRow label="Última share"   value={timeAgo(ckpool.minsSinceShare)}/>
+        </>
+      ):(
+        <p style={{color:"var(--muted)",fontSize:".82rem"}}>
+          Sin actividad en este pool — ¿tu minero está apuntando a public-pool.io?
+        </p>
+      )}
+    </Card>
+
+    {/* Link */}
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",
+        alignItems:"center",flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontWeight:600,marginBottom:4}}>Ver en public-pool.io</div>
+          <div style={{fontSize:".78rem",color:"var(--muted)"}}>Interfaz completa del pool</div>
+        </div>
+        <a href={`https://web.public-pool.io/#/app/${address}`}
+          target="_blank" rel="noreferrer"
+          style={{background:"var(--blue-bg)",color:"var(--blue)",border:"1px solid var(--blue)",
+            padding:"9px 18px",borderRadius:"var(--r-sm)",fontSize:".84rem",
+            fontWeight:600,textDecoration:"none"}}>
+          Abrir →
+        </a>
+      </div>
+    </Card>
+  </div>);
+}
+
+// ── Tab Probabilidad ──────────────────────────────────────────
+function TabOdds({data}){
+  const {odds,netDiffFmt,publicPool:pp,netDiff}=data;
+  if(!odds) return <Card><p style={{color:"var(--muted)",padding:12}}>Sin datos suficientes.</p></Card>;
+  const {oneInDays,years,perDay}=odds;
+  const hps=pp?.online?(pp.hashHps10m||pp.hashHps1h):0;
+
+  const periods=[
+    {l:"1 día",d:1},{l:"1 semana",d:7},{l:"1 mes",d:30},
+    {l:"3 meses",d:90},{l:"6 meses",d:180},{l:"1 año",d:365},
+    {l:"5 años",d:1825},{l:"10 años",d:3650},
+  ].map(p=>({...p,prob:(1-Math.pow(1-perDay,p.d))*100}));
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",
+        alignItems:"center",flexWrap:"wrap",gap:20,marginBottom:16}}>
+        <div>
+          <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>PROBABILIDAD POR DÍA</div>
+          <div style={{fontSize:"2.6rem",fontWeight:800,color:"var(--gold)",
+            letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>
+            1 / {oneInDays.toLocaleString("es-CO")}</div>
+          <div style={{fontSize:".75rem",color:"var(--dim)",marginTop:4}}>
+            Con {fmtHR(hps)} de hashrate</div>
+        </div>
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
+          borderRadius:10,padding:"16px 24px",textAlign:"center"}}>
+          <div style={{fontSize:"2.2rem",fontWeight:800,fontVariantNumeric:"tabular-nums"}}>
+            ~{Math.round(years).toLocaleString("es-CO")}</div>
+          <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:2}}>años promedio</div>
+        </div>
+      </div>
+      <div style={{background:"var(--surface2)",borderRadius:8,padding:"12px 14px",
+        fontSize:".75rem",color:"var(--dim)",lineHeight:1.7}}>
+        ⚡ Esto es estadística pura — podrías ganar mañana o en décadas. Premio: ~3.125 BTC.
+      </div>
+    </Card>
+
+    <Card>
+      <div style={{fontSize:".67rem",fontWeight:600,letterSpacing:".1em",
+        textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>
+        Probabilidad acumulada</div>
+      {periods.map((p,i)=>{
+        const c=p.prob>50?"var(--green)":p.prob>10?"var(--yellow)":"var(--blue)";
+        return(<div key={i} style={{display:"grid",gridTemplateColumns:"100px 1fr 100px",
+          gap:12,alignItems:"center",padding:"8px 0",
+          borderBottom:"1px solid var(--border)"}}>
+          <div style={{fontSize:".82rem"}}>{p.l}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{flex:1,height:5,background:"var(--border2)",borderRadius:3}}>
+              <div style={{height:"100%",width:`${Math.min(p.prob*2,100)}%`,
+                background:c,borderRadius:3,minWidth:2}}/>
+            </div>
+            <span style={{fontSize:".78rem",color:c,fontWeight:600,minWidth:50}}>
+              {p.prob<0.01?p.prob.toExponential(2):p.prob.toFixed(2)}%</span>
+          </div>
+          <div style={{fontSize:".75rem",color:"var(--muted)",textAlign:"right",
+            fontVariantNumeric:"tabular-nums"}}>
+            1:{Math.round(1/(p.prob/100)).toLocaleString("es-CO")}</div>
+        </div>);
+      })}
+    </Card>
+
+    <Card>
+      <div style={{fontSize:".67rem",fontWeight:600,letterSpacing:".1em",
+        textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Contexto de red</div>
+      <StatRow label="Dificultad de red"           value={netDiffFmt}/>
+      <StatRow label="Mejor share histórica"        value={<span style={{color:"var(--gold)"}}>{pp?.bestEverFmt}</span>}/>
+      <StatRow label="% de dificultad alcanzado"    value={netDiff&&pp?.bestEver
+        ?((pp.bestEver/netDiff)*100).toExponential(3)+"%":"—"}/>
+      <StatRow label="Premio por bloque"            value="~3.125 BTC 🍀"/>
+    </Card>
+  </div>);
+}
+
+// ── Dashboard ─────────────────────────────────────────────────
+export default function Dashboard(){
+  const router=useRouter();
+  const [data,setData]=useState(null);
+  const [error,setError]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [lastUpdate,setLastUpdate]=useState(null);
+  const [countdown,setCountdown]=useState(REFRESH);
+  const [tab,setTab]=useState("resumen");
+  const timerRef=useRef(null);
+  const cdRef=useRef(null);
+
+  const fetchData=useCallback(async()=>{
+    try{
+      const res=await fetch("/api/status");
+      if(res.status===401){router.replace("/");return;}
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
       setError(null);
       setLastUpdate(new Date());
       setCountdown(REFRESH);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [router]);
+    }catch(e){setError(e.message);}
+    finally{setLoading(false);}
+  },[router]);
 
-  useEffect(() => {
+  useEffect(()=>{
     fetchData();
-    timerRef.current = setInterval(fetchData, REFRESH * 1000);
-    return () => clearInterval(timerRef.current);
-  }, [fetchData]);
+    timerRef.current=setInterval(fetchData,REFRESH*1000);
+    return()=>clearInterval(timerRef.current);
+  },[fetchData]);
 
-  useEffect(() => {
-    cdRef.current = setInterval(() => setCountdown(c => c<=1 ? REFRESH : c-1), 1000);
-    return () => clearInterval(cdRef.current);
-  }, []);
+  useEffect(()=>{
+    cdRef.current=setInterval(()=>setCountdown(c=>c<=1?REFRESH:c-1),1000);
+    return()=>clearInterval(cdRef.current);
+  },[]);
 
-  async function logout() {
-    await fetch("/api/logout", { method:"POST" });
+  async function logout(){
+    await fetch("/api/logout",{method:"POST"});
     router.push("/");
   }
 
-  const miners = data?.miners ?? [];
-  const onlineMiners = miners.filter(m => m.online).length;
-  const ppOnline = data?.publicPool?.online;
-  const lastShareLate = ppOnline && data.publicPool.minsSinceShare > 15;
+  const miners=data?.miners??[];
+  const ppOnline=data?.publicPool?.online;
+  const shareLate=ppOnline&&data.publicPool.minsSinceShare>15;
+  const anyMinerOnline=miners.some(m=>m.online);
 
-  return (
-    <>
-      <Head>
-        <title>⛏️ Minero Dashboard</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1"/>
-        <meta name="robots" content="noindex,nofollow"/>
-      </Head>
+  return(<>
+    <Head>
+      <title>⛏️ Minero Dashboard</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1"/>
+      <meta name="robots" content="noindex,nofollow"/>
+    </Head>
 
-      <div className="root">
-        {/* Header */}
-        <header>
-          <div className="hl">
-            <span className="logo">⛏️</span>
-            <span className="title">Minero</span>
-            {data?.address && <span className="addr">{truncAddr(data.address)}</span>}
-            {ppOnline && (
-              <span className={`pill ${lastShareLate?"red":"green"}`}>
-                {lastShareLate ? "⚠ Sin share +15min" : "● Pool activo"}
-              </span>
-            )}
-          </div>
-          <div className="hr-hdr">
-            {error && <span className="err-b">⚠ {error}</span>}
-            {lastUpdate && !loading && (
-              <span className="upd">{lastUpdate.toLocaleTimeString("es-CO")} · {countdown}s</span>
-            )}
-            <button className="btn-r" onClick={fetchData} title="Actualizar">↻</button>
-            <button className="btn-out" onClick={logout}>Salir</button>
-          </div>
-        </header>
-
-        <Tabs active={tab} onChange={setTab}/>
-
-        <main>
-          {loading ? (
-            <Skeleton/>
-          ) : (
-            <>
-              {tab === "resumen" && <TabResumen data={data}/>}
-              {tab === "pool"    && <TabPool    data={data}/>}
-              {tab === "odds"    && <TabOdds    data={data}/>}
-            </>
+    <div className="root">
+      <header>
+        <div className="hl">
+          <span style={{fontSize:"1.1rem"}}>⛏️</span>
+          <span style={{fontSize:".95rem",fontWeight:700,letterSpacing:"-.02em"}}>Minero</span>
+          {data?.address&&<span className="addr">{truncAddr(data.address)}</span>}
+          {ppOnline&&<span className={`pill ${shareLate?"red":"green"}`}>
+            {shareLate?"⚠ Sin share +15min":"● Pool activo"}</span>}
+          {anyMinerOnline&&<span className="pill green">● Hardware online</span>}
+        </div>
+        <div className="hr-hdr">
+          {error&&<span className="err-b">⚠ {error}</span>}
+          {lastUpdate&&!loading&&(
+            <span className="upd">{lastUpdate.toLocaleTimeString("es-CO")} · {countdown}s</span>
           )}
-        </main>
-      </div>
+          <button className="btn-r" onClick={fetchData}>↻</button>
+          <button className="btn-out" onClick={logout}>Salir</button>
+        </div>
+      </header>
 
-      <style jsx>{`
-        .root { min-height:100vh; display:flex; flex-direction:column; }
-        header {
-          position:sticky; top:0; z-index:20;
-          background:var(--surface); border-bottom:1px solid var(--border2);
-          padding:0 24px; height:54px;
-          display:flex; align-items:center; justify-content:space-between; gap:12px;
-        }
-        .hl, .hr-hdr { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-        .logo  { font-size:1.1rem; }
-        .title { font-size:.95rem; font-weight:700; letter-spacing:-.02em; }
-        .addr  { font-size:.72rem; color:var(--muted); font-family:monospace;
-                 background:var(--surface3); padding:3px 8px; border-radius:20px; }
-        .pill  { font-size:.7rem; font-weight:600; padding:3px 10px; border-radius:20px; }
-        .pill.green { background:var(--green-bg); color:var(--green); }
-        .pill.red   { background:var(--red-bg);   color:var(--red); }
-        .upd   { font-size:.72rem; color:var(--dim); white-space:nowrap; }
-        .err-b { font-size:.72rem; color:var(--red); padding:3px 8px;
-                 background:var(--red-bg); border-radius:6px; }
-        .btn-r { background:none; border:1px solid var(--border2); color:var(--muted);
-                 width:30px; height:30px; border-radius:var(--r-sm); cursor:pointer;
-                 font-size:1rem; display:flex; align-items:center; justify-content:center;
-                 transition:border-color .15s,color .15s; }
-        .btn-r:hover { border-color:var(--text); color:var(--text); }
-        .btn-out { background:none; border:1px solid var(--border2); color:var(--muted);
-                   padding:5px 14px; border-radius:var(--r-sm); cursor:pointer; font-size:.78rem;
-                   transition:border-color .15s,color .15s; }
-        .btn-out:hover { border-color:var(--red); color:var(--red); }
-        main { max-width:1200px; margin:0 auto; padding:24px 24px 48px; width:100%; }
+      <Tabs active={tab} onChange={setTab}/>
 
-        @media (max-width:600px) {
-          header { padding:0 14px; height:auto; min-height:54px; padding:10px 14px; }
-          main   { padding:16px 12px 40px; }
-          .addr, .upd { display:none; }
-        }
-      `}</style>
-    </>
-  );
+      <main>
+        {loading?<Skeleton/>:<>
+          {tab==="resumen"  &&<TabResumen  data={data}/>}
+          {tab==="hardware" &&<TabHardware miners={miners}/>}
+          {tab==="pool"     &&<TabPool     data={data}/>}
+          {tab==="odds"     &&<TabOdds     data={data}/>}
+        </>}
+      </main>
+    </div>
+
+    <style jsx global>{`
+      @keyframes ping{0%{transform:scale(1);opacity:.6}70%{transform:scale(2.2);opacity:0}100%{transform:scale(2.2);opacity:0}}
+    `}</style>
+
+    <style jsx>{`
+      .root{min-height:100vh;display:flex;flex-direction:column;}
+      header{position:sticky;top:0;z-index:20;background:var(--surface);
+        border-bottom:1px solid var(--border2);padding:0 24px;height:54px;
+        display:flex;align-items:center;justify-content:space-between;gap:12px;}
+      .hl,.hr-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+      .addr{font-size:.72rem;color:var(--muted);font-family:monospace;
+        background:var(--surface3);padding:3px 8px;border-radius:20px;}
+      .pill{font-size:.7rem;font-weight:600;padding:3px 10px;border-radius:20px;}
+      .pill.green{background:var(--green-bg);color:var(--green);}
+      .pill.red{background:var(--red-bg);color:var(--red);}
+      .upd{font-size:.72rem;color:var(--dim);white-space:nowrap;}
+      .err-b{font-size:.72rem;color:var(--red);padding:3px 8px;
+        background:var(--red-bg);border-radius:6px;}
+      .btn-r{background:none;border:1px solid var(--border2);color:var(--muted);
+        width:30px;height:30px;border-radius:var(--r-sm);cursor:pointer;font-size:1rem;
+        display:flex;align-items:center;justify-content:center;
+        transition:border-color .15s,color .15s;}
+      .btn-r:hover{border-color:var(--text);color:var(--text);}
+      .btn-out{background:none;border:1px solid var(--border2);color:var(--muted);
+        padding:5px 14px;border-radius:var(--r-sm);cursor:pointer;font-size:.78rem;
+        transition:border-color .15s,color .15s;}
+      .btn-out:hover{border-color:var(--red);color:var(--red);}
+      main{max-width:1200px;margin:0 auto;padding:24px 24px 48px;width:100%;}
+      @media(max-width:600px){
+        header{padding:0 14px;height:auto;min-height:54px;padding:10px 14px;}
+        main{padding:16px 12px 40px;}
+        .addr,.upd{display:none;}
+      }
+    `}</style>
+  </>);
 }
 
-function Skeleton() {
-  return (
-    <div style={{display:"grid",gap:14,gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))"}}>
-      {[1,2,3,4].map(i=>(
-        <div key={i} style={{background:"var(--surface)",border:"1px solid var(--border2)",
-          borderRadius:"var(--r)",padding:22}}>
-          {[1,2,3].map(j=><div key={j} style={{height:14,background:"var(--surface3)",
-            borderRadius:6,marginBottom:12,width:j===2?"55%":"100%",
-            animation:"pulse 1.5s ease-in-out infinite"}}/>)}
-        </div>
-      ))}
-      <style jsx global>{`@keyframes pulse{0%,100%{opacity:.3}50%{opacity:.7}}`}</style>
-    </div>
-  );
+function Skeleton(){
+  return(<div style={{display:"grid",gap:14,
+    gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))"}}>
+    {[1,2,3,4].map(i=>(
+      <div key={i} style={{background:"var(--surface)",border:"1px solid var(--border2)",
+        borderRadius:"var(--r)",padding:22}}>
+        {[1,2,3].map(j=><div key={j} style={{height:14,background:"var(--surface3)",
+          borderRadius:6,marginBottom:12,width:j===2?"55%":"100%",
+          animation:"pulse 1.5s ease-in-out infinite"}}/>)}
+      </div>
+    ))}
+    <style jsx global>{`@keyframes pulse{0%,100%{opacity:.3}50%{opacity:.7}}`}</style>
+  </div>);
 }
