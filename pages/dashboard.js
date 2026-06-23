@@ -644,9 +644,11 @@ function SecAnalisis({data}) {
   );
 }
 
-function SecFinanzas({data,copKwh,onCopKwh,usdCop,onUsdCop,capex,onCapex}) {
+function SecFinanzas({data,copKwh,onCopKwh,usdCop,onUsdCop,capex,onCapex,manualW,onManualW}) {
   const {btcPrice,financials,fleet,odds}=data;
-  const totalW=fleet?.totalPower||0;
+  const hwW=fleet?.totalPower||0;
+  // Si el hardware está offline, usar potencia manual ingresada por el usuario
+  const totalW=hwW>0?hwW:manualW;
   const e=totalW>0?calcElec(totalW,copKwh,usdCop):null;
   const fin=financials;
   const revDayCOP   = fin&&usdCop?fin.revenuePerDayUSD*usdCop:null;
@@ -725,8 +727,31 @@ function SecFinanzas({data,copKwh,onCopKwh,usdCop,onUsdCop,capex,onCapex}) {
             <div style={{fontSize:".65rem",color:C.dim,marginTop:5}}>
               Bitaxe Gamma ≈ $200–400 USD</div>
           </div>
+          {hwW===0&&(
+            <div>
+              <div style={{fontSize:".72rem",color:C.coral,marginBottom:6,fontWeight:600}}>
+                ⚡ Potencia manual (W) — hardware offline</div>
+              <input type="number" min="1" max="5000" step="1" value={manualW}
+                onChange={e=>onManualW(parseFloat(e.target.value)||0)}
+                placeholder="Ej: 19"
+                style={{width:"100%",background:C.surf2,border:`1px solid ${C.coral}40`,
+                  color:C.text,padding:"10px 14px",borderRadius:10,
+                  fontSize:"1rem",fontWeight:700,outline:"none",
+                  fontFamily:"'JetBrains Mono',monospace"}}/>
+              <div style={{fontSize:".65rem",color:C.dim,marginTop:5}}>
+                Bitaxe Gamma ≈ 15–22 W · ingresa el consumo real de tus equipos</div>
+            </div>
+          )}
         </div>
       </Card>
+      {/* Aviso explicativo */}
+      <div style={{background:`${C.blue}08`,border:`1px solid ${C.blue}18`,
+        borderRadius:12,padding:"14px 18px",fontSize:".78rem",color:C.muted,lineHeight:1.8}}>
+        <div style={{fontWeight:700,color:C.blue,marginBottom:6}}>ℹ️ ¿Qué significa cada número?</div>
+        <div>• <b style={{color:C.gold}}>Ingresos estimados</b> — lo que ganarías <i>en promedio estadístico</i> si minaras muchos bloques durante ese período. En la práctica, el Bitaxe minará 0 bloques casi siempre (o el premio completo de 3.125 BTC en rarísima ocasión).</div>
+        <div style={{marginTop:4}}>• <b style={{color:C.coral}}>Electricidad</b> — costo real y constante que pagas cada mes.</div>
+        <div style={{marginTop:4}}>• <b style={{color:profMonCOP!=null?(profMonCOP>0?C.green:C.red):C.muted}}>Utilidad neta</b> — la diferencia. Con 1 TH/s en solo mining generalmente <b>gastas más en luz de lo que recibes</b> estadísticamente. El valor del Bitaxe es el <i>ticket de lotería</i> de ganar 3.125 BTC.</div>
+      </div>
 
       {fin?(
         <GlowCard color={C.gold}>
@@ -1289,6 +1314,7 @@ export default function Dashboard() {
   const [copKwh,setCopKwh]=useState(KWH_COP_DEF);
   const [usdCop,setUsdCop]=useState(USD_COP_DEF);
   const [capex,setCapex]=useState(0);
+  const [manualW,setManualW]=useState(19); // 19W = consumo típico Bitaxe Gamma
   const [sideOpen,setSideOpen]=useState(false);
 
   const fetchData=useCallback(async()=>{
@@ -1418,7 +1444,8 @@ export default function Dashboard() {
             {tab==="analisis" &&<SecAnalisis  data={data}/>}
             {tab==="finanzas" &&<SecFinanzas  data={data} copKwh={copKwh} onCopKwh={setCopKwh}
                                   usdCop={usdCop} onUsdCop={setUsdCop}
-                                  capex={capex} onCapex={setCapex}/>}
+                                  capex={capex} onCapex={setCapex}
+                                  manualW={manualW} onManualW={setManualW}/>}
             {tab==="hardware" &&<SecHardware  miners={miners} copKwh={copKwh}
                                   onCopKwh={setCopKwh} usdCop={usdCop}/>}
             {tab==="pool"     &&<SecPool      data={data}/>}
