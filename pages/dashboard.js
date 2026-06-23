@@ -4,584 +4,752 @@ import Head from "next/head";
 
 const REFRESH = 20;
 
-// ── Formato ───────────────────────────────────────────────────
+// ── Utilidades ─────────────────────────────────────────────────
 function fmtHR(hps) {
-  if (!hps || hps <= 0) return "0 H/s";
+  if (!hps || hps <= 0) return { val: "0", unit: "H/s", full: "0 H/s" };
   const u = ["H/s","KH/s","MH/s","GH/s","TH/s","PH/s"];
-  let i=0, v=hps;
-  while (v>=1000 && i<u.length-1){v/=1000;i++;}
-  return `${v.toFixed(2)} ${u[i]}`;
+  let i = 0, v = hps;
+  while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+  return { val: v.toFixed(2), unit: u[i], full: `${v.toFixed(2)} ${u[i]}` };
 }
 function timeAgo(mins) {
-  if (!isFinite(mins)||mins==null) return "—";
-  const m=Math.round(mins);
-  if (m<1) return "ahora";
-  if (m<60) return `${m}m`;
-  return `${Math.round(m/60)}h ${m%60}m`;
+  if (!isFinite(mins) || mins == null) return "—";
+  const m = Math.round(mins);
+  if (m < 1)  return "ahora";
+  if (m < 60) return `${m}m atrás`;
+  return `${Math.floor(m/60)}h ${m%60}m`;
 }
-function truncAddr(a){return a?a.slice(0,10)+"…"+a.slice(-6):"";}
+function truncAddr(a) { return a ? a.slice(0,8)+"…"+a.slice(-6) : ""; }
 
-// ── Componentes base ──────────────────────────────────────────
-function Dot({status,pulse}){
-  const c={ok:"#3fb950",warn:"#d29922",crit:"#f85149",off:"#4a5260"}[status]||"#4a5260";
-  return(<span style={{position:"relative",display:"inline-flex",alignItems:"center",
-    justifyContent:"center",width:10,height:10,flexShrink:0}}>
-    {pulse&&status==="ok"&&<span style={{position:"absolute",inset:0,borderRadius:"50%",
-      background:c,opacity:.4,animation:"ping 1.5s ease-in-out infinite"}}/>}
-    <span style={{width:8,height:8,borderRadius:"50%",background:c,
-      boxShadow:status!=="off"?`0 0 5px ${c}`:"none",position:"relative"}}/>
-  </span>);
+// ── Clock en tiempo real ───────────────────────────────────────
+function LiveClock() {
+  const [t, setT] = useState("");
+  useEffect(() => {
+    const tick = () => setT(new Date().toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit",second:"2-digit"}));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:".78rem",
+    color:"var(--muted)",letterSpacing:".05em"}}>{t}</span>;
 }
 
-function StatRow({label,value,valueStyle,sub}){
-  return(<div className="r">
-    <span className="l">{label}</span>
-    <div style={{textAlign:"right"}}>
-      <span className="v" style={valueStyle}>{value??"—"}</span>
-      {sub&&<div style={{fontSize:".68rem",color:"var(--dim)"}}>{sub}</div>}
+// ── LiveDot ────────────────────────────────────────────────────
+function LiveDot({ status }) {
+  const c = {ok:"var(--green)",warn:"var(--yellow)",crit:"var(--red)",off:"var(--dim)"}[status]||"var(--dim)";
+  return (
+    <span style={{position:"relative",display:"inline-flex",alignItems:"center",
+      justifyContent:"center",width:12,height:12,flexShrink:0}}>
+      {status!=="off"&&<span style={{position:"absolute",inset:0,borderRadius:"50%",
+        background:c,opacity:.35,animation:"ping 1.8s ease-in-out infinite"}}/>}
+      <span style={{width:8,height:8,borderRadius:"50%",background:c,
+        boxShadow:status!=="off"?`0 0 8px ${c}`:undefined,position:"relative"}}/>
+    </span>
+  );
+}
+
+// ── Chip ───────────────────────────────────────────────────────
+function Chip({ label, color="dim", dot }) {
+  const map = {
+    green:  {bg:"var(--green-bg)", fg:"var(--green)",  bd:"rgba(0,230,118,.2)"},
+    red:    {bg:"var(--red-bg)",   fg:"var(--red)",    bd:"rgba(255,77,106,.2)"},
+    yellow: {bg:"var(--yellow-bg)",fg:"var(--yellow)", bd:"rgba(255,179,0,.2)"},
+    blue:   {bg:"var(--blue-bg)",  fg:"var(--blue)",   bd:"rgba(79,195,247,.2)"},
+    gold:   {bg:"var(--gold-bg)",  fg:"var(--gold)",   bd:"rgba(255,213,79,.2)"},
+    dim:    {bg:"var(--surface3)", fg:"var(--muted)",  bd:"var(--border2)"},
+  };
+  const s = map[color]||map.dim;
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:".67rem",
+      fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",
+      padding:"4px 10px",borderRadius:99,background:s.bg,color:s.fg,
+      border:`1px solid ${s.bd}`,whiteSpace:"nowrap"}}>
+      {dot&&<LiveDot status={color==="green"?"ok":color==="red"?"crit":"warn"}/>}
+      {label}
+    </span>
+  );
+}
+
+// ── BigNumber ──────────────────────────────────────────────────
+function BigNumber({ val, unit, color="var(--text)", size="2.8rem" }) {
+  return (
+    <div style={{animation:"fade-up .35s ease"}}>
+      <span style={{fontSize:size,fontWeight:900,color,letterSpacing:"-.05em",
+        fontVariantNumeric:"tabular-nums",lineHeight:1}}>{val}</span>
+      {unit&&<span style={{fontSize:"1rem",fontWeight:600,color:"var(--muted)",
+        marginLeft:5,letterSpacing:"-.02em"}}>{unit}</span>}
     </div>
-    <style jsx>{`.r{display:flex;justify-content:space-between;align-items:center;
-      padding:7px 0;border-bottom:1px solid var(--border);}
-      .r:last-child{border-bottom:none;}
-      .l{font-size:.78rem;color:var(--muted);}
-      .v{font-size:.84rem;font-weight:500;font-variant-numeric:tabular-nums;}`}</style>
-  </div>);
+  );
 }
 
-function Card({children,style,glow}){
-  return(<div className={`c${glow?" glow":""}`} style={style}>{children}
-    <style jsx>{`.c{background:var(--surface);border:1px solid var(--border2);
-      border-radius:var(--r);padding:20px 22px;}
-      .glow{border-color:rgba(63,185,80,.3);box-shadow:0 0 20px rgba(63,185,80,.06);}`}</style>
-  </div>);
-}
-
-function SectionTitle({children}){
-  return <h2 style={{fontSize:".67rem",fontWeight:600,letterSpacing:".12em",
-    textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>{children}</h2>;
-}
-
-function Badge({label,bg,fg}){
-  return <span style={{display:"inline-block",fontSize:".62rem",fontWeight:700,
-    letterSpacing:".08em",textTransform:"uppercase",padding:"3px 9px",
-    borderRadius:20,background:bg,color:fg,marginBottom:14}}>{label}</span>;
-}
-
-// ── Gauge de temperatura ──────────────────────────────────────
-function TempGauge({temp,warn=68,crit=75}){
-  const max=100, pct=Math.min(temp/max,1);
-  const color=temp>=crit?"#f85149":temp>=warn?"#d29922":"#3fb950";
-  const r=42, cx=54, cy=54;
-  const arc=Math.PI*1.3;
-  const startAngle=-Math.PI*0.15-Math.PI;
-  const endAngle=startAngle+arc*pct;
-  const x1=cx+r*Math.cos(startAngle-Math.PI/2+Math.PI);
-  const y1=cy+r*Math.sin(startAngle-Math.PI/2+Math.PI);
-  const x2=cx+r*Math.cos(endAngle-Math.PI/2+Math.PI);
-  const y2=cy+r*Math.sin(endAngle-Math.PI/2+Math.PI);
-  const large=arc*pct>Math.PI?1:0;
-
-  // Simple CSS gauge instead
-  const angle=temp>=crit?"-60deg":temp>=warn?"-20deg":"20deg";
-  return(
-    <div style={{textAlign:"center",padding:"4px 0 8px"}}>
-      <div style={{position:"relative",display:"inline-block"}}>
-        <svg width={108} height={70} viewBox="0 0 108 70">
-          {/* Track */}
-          <path d="M14 62 A40 40 0 0 1 94 62" fill="none" stroke="var(--border2)" strokeWidth={8} strokeLinecap="round"/>
-          {/* Fill */}
-          <path d={`M14 62 A40 40 0 ${temp>=50?1:0} 1 ${14+80*(temp/100)} ${62-Math.sin(Math.acos((14+80*(temp/100)-54)/40))*40}`}
-            fill="none" stroke={color} strokeWidth={8} strokeLinecap="round"
-            style={{filter:`drop-shadow(0 0 4px ${color})`}}/>
-          {/* Needle approx */}
-        </svg>
-        <div style={{position:"absolute",bottom:0,left:"50%",transform:"translateX(-50%)",
-          textAlign:"center",lineHeight:1}}>
-          <div style={{fontSize:"1.7rem",fontWeight:800,color,
-            fontVariantNumeric:"tabular-nums",letterSpacing:"-.03em"}}>{temp}°</div>
-          <div style={{fontSize:".65rem",color:"var(--dim)",marginTop:2}}>ASIC temp</div>
+// ── ProgressBar ────────────────────────────────────────────────
+function ProgressBar({ value, max, color="var(--green)", height=5, label, right }) {
+  const pct = Math.min((value/max)*100,100);
+  return (
+    <div>
+      {(label||right)&&(
+        <div style={{display:"flex",justifyContent:"space-between",
+          fontSize:".72rem",color:"var(--muted)",marginBottom:5}}>
+          {label&&<span>{label}</span>}
+          {right&&<span style={{color:"var(--text)",fontWeight:600}}>{right}</span>}
         </div>
+      )}
+      <div style={{height,background:"var(--surface3)",borderRadius:99,overflow:"hidden",
+        border:"1px solid var(--border)"}}>
+        <div style={{height:"100%",width:`${pct}%`,borderRadius:99,
+          background:`linear-gradient(90deg,${color},${color}bb)`,
+          transition:"width .6s cubic-bezier(.4,0,.2,1)",
+          boxShadow:`0 0 8px ${color}50`,minWidth:pct>0?3:0}}/>
       </div>
     </div>
   );
 }
 
-// ── Barra de progreso ─────────────────────────────────────────
-function Bar({value,max,color="var(--green)",label,unit=""}){
-  const pct=Math.min((value/max)*100,100);
-  return(<div style={{marginBottom:10}}>
-    <div style={{display:"flex",justifyContent:"space-between",
-      fontSize:".72rem",color:"var(--muted)",marginBottom:4}}>
-      <span>{label}</span><span style={{color:"var(--text)",fontWeight:600}}>{value}{unit}</span>
+// ── Card ───────────────────────────────────────────────────────
+function Card({ children, style, accent }) {
+  const [hov, setHov] = useState(false);
+  const accentLine = {green:"var(--green)",blue:"var(--blue)",gold:"var(--gold)",red:"var(--red)"};
+  return (
+    <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{
+        background:"var(--surface)",
+        border:`1px solid ${hov?"var(--border2)":"var(--border)"}`,
+        borderRadius:"var(--r)",padding:"22px 24px",
+        transition:"border-color .2s,box-shadow .2s,transform .2s",
+        boxShadow:hov?"0 8px 32px rgba(0,0,0,.45)":"none",
+        transform:hov?"translateY(-1px)":"none",
+        position:"relative",overflow:"hidden",...style}}>
+      {accent&&accentLine[accent]&&(
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,
+          background:`linear-gradient(90deg,transparent 0%,${accentLine[accent]}60 50%,transparent 100%)`}}/>
+      )}
+      {children}
     </div>
-    <div style={{height:5,background:"var(--border2)",borderRadius:3,overflow:"hidden"}}>
-      <div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:3,
-        transition:"width .5s ease",boxShadow:`0 0 6px ${color}40`}}/>
+  );
+}
+
+// ── KPICard ────────────────────────────────────────────────────
+function KPICard({ label, val, unit, sub, color="var(--text)", accent, icon }) {
+  return (
+    <Card accent={accent} style={{display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:".6rem",fontWeight:700,letterSpacing:".12em",
+          textTransform:"uppercase",color:"var(--dim)"}}>{label}</span>
+        {icon&&<span style={{fontSize:"1rem",opacity:.5}}>{icon}</span>}
+      </div>
+      <BigNumber val={val} unit={unit} color={color}/>
+      {sub&&<div style={{fontSize:".7rem",color:"var(--dim)",marginTop:2}}>{sub}</div>}
+    </Card>
+  );
+}
+
+// ── Section ────────────────────────────────────────────────────
+function Section({ title, children, action }) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <h2 style={{fontSize:".63rem",fontWeight:700,letterSpacing:".14em",
+          textTransform:"uppercase",color:"var(--dim)",
+          display:"flex",alignItems:"center",gap:8}}>
+          <span style={{width:2,height:12,background:"var(--green)",
+            borderRadius:1,display:"inline-block"}}/>
+          {title}
+        </h2>
+        {action}
+      </div>
+      {children}
     </div>
-  </div>);
+  );
 }
 
-// ── Tabs ──────────────────────────────────────────────────────
-function Tabs({active,onChange}){
-  const T=[{id:"resumen",label:"⛏️ Resumen"},{id:"hardware",label:"🖥 Hardware"},
-           {id:"pool",label:"🌊 Pool"},{id:"odds",label:"🎰 Probabilidad"}];
-  return(<div className="tabs">
-    {T.map(t=><button key={t.id} className={`tab${active===t.id?" on":""}`}
-      onClick={()=>onChange(t.id)}>{t.label}</button>)}
-    <style jsx>{`.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border2);
-      padding:0 24px;background:var(--surface);overflow-x:auto;scrollbar-width:none;}
-      .tab{background:none;border:none;border-bottom:2px solid transparent;
-        color:var(--muted);padding:13px 16px;font-size:.84rem;cursor:pointer;white-space:nowrap;
-        transition:color .15s,border-color .15s;}
-      .tab.on{color:var(--text);border-bottom-color:var(--green);font-weight:600;}
-      .tab:hover:not(.on){color:var(--text);}`}</style>
-  </div>);
+// ── StatRow ────────────────────────────────────────────────────
+function StatRow({ label, value, valueStyle, mono }) {
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+      padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+      <span style={{fontSize:".78rem",color:"var(--muted)"}}>{label}</span>
+      <span style={{fontSize:".84rem",fontWeight:500,fontVariantNumeric:"tabular-nums",
+        fontFamily:mono?"'JetBrains Mono',monospace":undefined,...valueStyle}}>
+        {value??<span style={{color:"var(--dim)"}}>—</span>}
+      </span>
+    </div>
+  );
 }
 
-// ── Tab Hardware ──────────────────────────────────────────────
-function TabHardware({miners}){
-  if(!miners?.length) return <Card><p style={{color:"var(--muted)",padding:12}}>
-    No hay mineros configurados.</p></Card>;
-
-  return(<div style={{display:"flex",flexDirection:"column",gap:20}}>
-    {miners.map((m,i)=><MinerCardFull key={i} m={m}/>)}
-  </div>);
+// ── NavTabs ────────────────────────────────────────────────────
+function NavTabs({ active, onChange }) {
+  const T = [
+    {id:"resumen", icon:"◈", label:"Resumen"},
+    {id:"hardware",icon:"⬡", label:"Hardware"},
+    {id:"pool",    icon:"◉", label:"Pool"},
+    {id:"odds",    icon:"◎", label:"Probabilidad"},
+  ];
+  return (
+    <nav style={{display:"flex",gap:2,padding:"0 28px",background:"var(--surface)",
+      borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none"}}>
+      {T.map(t=>(
+        <button key={t.id} onClick={()=>onChange(t.id)}
+          style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",
+            borderBottom:`2px solid ${active===t.id?"var(--green)":"transparent"}`,
+            color:active===t.id?"var(--text)":"var(--muted)",
+            padding:"14px 18px",fontSize:".84rem",cursor:"pointer",whiteSpace:"nowrap",
+            fontWeight:active===t.id?700:400,transition:"color .15s,border-color .15s",
+            letterSpacing:"-.01em"}}>
+          <span style={{fontSize:".65rem",opacity:.6}}>{t.icon}</span>
+          {t.label}
+        </button>
+      ))}
+    </nav>
+  );
 }
 
-function MinerCardFull({m}){
-  const status=!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok";
-  const statusLabel={ok:"Activo",warn:"Temperatura alta",crit:"¡CRÍTICO!",off:"Sin conexión"}[status];
-  const statusColor={ok:"var(--green)",warn:"var(--yellow)",crit:"var(--red)",off:"var(--dim)"}[status];
-  const shareTotal=(m.sharesAccepted||0)+(m.sharesRejected||0);
-  const acceptRate=shareTotal>0?(m.sharesAccepted/shareTotal*100).toFixed(1):null;
+// ── TempGauge SVG ──────────────────────────────────────────────
+function TempGauge({ temp }) {
+  if (!temp && temp !== 0) return null;
+  const pct   = Math.min(temp/100, 1);
+  const color = temp>=75?"var(--red)":temp>=68?"var(--yellow)":"var(--green)";
+  const label = temp>=75?"CRÍTICO":temp>=68?"ALTO":"OK";
+  const R=36,cx=50,cy=52;
+  const startA=Math.PI*.75, span=Math.PI*1.5;
+  const toXY=(a)=>[cx+R*Math.cos(a),cy+R*Math.sin(a)];
+  const [sx,sy]=toXY(startA);
+  const endA=startA+span*pct;
+  const [ex,ey]=toXY(endA);
+  const large=span*pct>Math.PI?1:0;
+  const [ex2,ey2]=toXY(startA+span);
+
+  return (
+    <div style={{textAlign:"center"}}>
+      <svg width={100} height={76} viewBox="0 0 100 76">
+        <path d={`M ${sx} ${sy} A ${R} ${R} 0 1 1 ${ex2} ${ey2}`}
+          fill="none" stroke="var(--surface3)" strokeWidth={7} strokeLinecap="round"/>
+        {pct>0&&<path d={`M ${sx} ${sy} A ${R} ${R} 0 ${large} 1 ${ex} ${ey}`}
+          fill="none" stroke={color} strokeWidth={7} strokeLinecap="round"
+          style={{filter:`drop-shadow(0 0 5px ${color})`}}/>}
+        <text x={50} y={54} textAnchor="middle" fontSize={17} fontWeight={800}
+          fill={color} fontFamily="'JetBrains Mono',monospace">{temp}°</text>
+        <text x={50} y={67} textAnchor="middle" fontSize={6.5} fontWeight={700}
+          fill={color} letterSpacing={1.5}>{label}</text>
+      </svg>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// TABS
+// ─────────────────────────────────────────────────────────────
+
+function TabResumen({ data }) {
+  const {miners=[],publicPool:pp,netDiffFmt,odds}=data;
+  const hr=pp?.online?fmtHR(pp.hashHps10m):null;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:28,animation:"fade-up .3s ease"}}>
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
+        <KPICard label="Hashrate ahora" val={hr?.val||"—"} unit={hr?.unit}
+          color="var(--green)" sub="Últimos 10 min · public-pool" accent="green" icon="⚡"/>
+        <KPICard label="Hashrate 1h" val={pp?.online?fmtHR(pp.hashHps1h).val:"—"}
+          unit={pp?.online?fmtHR(pp.hashHps1h).unit:""} sub="Promedio hora" icon="📊"/>
+        <KPICard label="Mejor share" val={pp?.bestEverFmt||"—"}
+          color="var(--gold)" sub="All-time histórico" accent="gold" icon="🏆"/>
+        <KPICard label="Dificultad red" val={netDiffFmt||"—"}
+          sub="Bitcoin mainnet" icon="🌐"/>
+      </div>
+
+      {/* Hardware */}
+      <Section title="Equipos · Estado">
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+          {miners.map((m,i)=>{
+            const st=!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok";
+            const sc={ok:"var(--green)",warn:"var(--yellow)",crit:"var(--red)",off:"var(--dim)"}[st];
+            return(
+              <Card key={i} accent={m.online&&st==="ok"?"green":m.online&&st==="crit"?"red":undefined}>
+                <div style={{display:"flex",justifyContent:"space-between",
+                  alignItems:"center",marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <LiveDot status={st}/>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:".95rem"}}>{m.name}</div>
+                      {m.online&&<div style={{fontSize:".7rem",color:"var(--dim)"}}>{m.model}</div>}
+                    </div>
+                  </div>
+                  <Chip label={m.online?st==="crit"?"¡Crítico!":st==="warn"?"Temp alta":"Activo":"Offline"}
+                    color={m.online?st==="ok"?"green":st==="crit"?"red":"yellow":"dim"} dot={m.online}/>
+                </div>
+                {m.online?(
+                  <>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                      {[
+                        {l:"Hashrate",v:fmtHR(m.hashHps).full,c:"var(--green)"},
+                        {l:"Temp",v:`${m.temp}°C`,c:sc},
+                        {l:"Potencia",v:`${m.power?.toFixed(0)}W`,c:"var(--text)"},
+                      ].map((s,j)=>(
+                        <div key={j} style={{background:"var(--surface2)",border:"1px solid var(--border)",
+                          borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
+                          <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:3}}>{s.l}</div>
+                          <div style={{fontSize:".88rem",fontWeight:700,color:s.c,
+                            fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <ProgressBar value={m.temp} max={85} color={sc}
+                      label="Temperatura chip" right={`${m.temp}°C / 85°C`}/>
+                  </>
+                ):(
+                  <div style={{fontSize:".78rem",color:"var(--muted)",padding:"10px 14px",
+                    background:"var(--surface2)",borderRadius:9,border:"1px solid var(--border)"}}>
+                    No alcanzable desde la nube — ver tab Hardware
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      </Section>
+
+      {/* Pool */}
+      {pp?.online&&(
+        <Section title="Pool · Actividad">
+          <Card accent="blue">
+            <div style={{display:"flex",justifyContent:"space-between",
+              alignItems:"flex-start",flexWrap:"wrap",gap:16,marginBottom:18}}>
+              <div>
+                <Chip label="public-pool.io" color="blue" dot/>
+                <div style={{marginTop:12}}>
+                  <BigNumber val={fmtHR(pp.hashHps10m).val}
+                    unit={fmtHR(pp.hashHps10m).unit} color="var(--blue)" size="2.2rem"/>
+                  <div style={{fontSize:".7rem",color:"var(--dim)",marginTop:3}}>hashrate · 10 min</div>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {[
+                  {l:"Shares",v:pp.shares?.toLocaleString("es-CO")},
+                  {l:"Workers",v:pp.workerCount},
+                  {l:"Mejor",v:<span style={{color:"var(--gold)"}}>{pp.bestEverFmt}</span>},
+                  {l:"Última share",v:<span style={{
+                    color:pp.minsSinceShare>15?"var(--red)":"var(--green)"}}>
+                    {timeAgo(pp.minsSinceShare)}</span>},
+                ].map((s,i)=>(
+                  <div key={i} style={{background:"var(--surface2)",border:"1px solid var(--border)",
+                    borderRadius:9,padding:"10px 14px",minWidth:110}}>
+                    <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:2}}>{s.l}</div>
+                    <div style={{fontSize:".86rem",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {pp.minsSinceShare>15&&(
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",
+                background:"var(--red-bg)",border:"1px solid rgba(255,77,106,.2)",
+                borderRadius:9,fontSize:".78rem",color:"var(--red)"}}>
+                ⚠ Sin share hace {Math.round(pp.minsSinceShare)} minutos — revisa tu minero
+              </div>
+            )}
+          </Card>
+        </Section>
+      )}
+
+      {/* Odds */}
+      {odds&&(
+        <Section title="Probabilidad de bloque">
+          <Card accent="gold">
+            <div style={{display:"flex",justifyContent:"space-between",
+              alignItems:"center",flexWrap:"wrap",gap:20}}>
+              <div>
+                <div style={{fontSize:".6rem",fontWeight:700,letterSpacing:".12em",
+                  textTransform:"uppercase",color:"var(--dim)",marginBottom:8}}>Chance por día</div>
+                <BigNumber val={`1 / ${odds.oneInDays.toLocaleString("es-CO")}`}
+                  color="var(--gold)" size="1.9rem"/>
+              </div>
+              <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+                borderRadius:12,padding:"14px 22px",textAlign:"center"}}>
+                <div style={{fontSize:"2rem",fontWeight:900,fontVariantNumeric:"tabular-nums"}}>
+                  ~{Math.round(odds.years).toLocaleString("es-CO")}</div>
+                <div style={{fontSize:".7rem",color:"var(--dim)",marginTop:2}}>años en promedio</div>
+              </div>
+              <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+                borderRadius:12,padding:"14px 18px",fontSize:".78rem",color:"var(--muted)",lineHeight:2}}>
+                📅 1 mes: {((1-Math.pow(1-odds.perDay,30))*100).toFixed(3)}%<br/>
+                📅 1 año: {((1-Math.pow(1-odds.perDay,365))*100).toFixed(2)}%<br/>
+                🍀 Premio: ~3.125 BTC
+              </div>
+            </div>
+          </Card>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// ── Hardware tab ───────────────────────────────────────────────
+function TabHardware({ miners }) {
+  if(!miners?.length) return <Card><p style={{color:"var(--muted)",padding:12}}>Sin mineros configurados.</p></Card>;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:20,animation:"fade-up .3s ease"}}>
+      {miners.map((m,i)=><MinerDetail key={i} m={m}/>)}
+    </div>
+  );
+}
+
+function MinerDetail({ m }) {
+  const st=!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok";
+  const sc={ok:"var(--green)",warn:"var(--yellow)",crit:"var(--red)",off:"var(--dim)"}[st];
+  const total=(m.sharesAccepted||0)+(m.sharesRejected||0);
+  const rate=total>0?((m.sharesAccepted/total)*100).toFixed(1):0;
 
   if(!m.online) return(
     <Card>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-        <Dot status="off"/><span style={{fontWeight:700,fontSize:"1rem"}}>{m.name}</span>
-        <span style={{fontSize:".75rem",color:"var(--red)",background:"var(--red-bg)",
-          padding:"2px 8px",borderRadius:20}}>Sin conexión</span>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+        <LiveDot status="off"/>
+        <span style={{fontWeight:700,fontSize:"1.05rem"}}>{m.name}</span>
+        <Chip label="Sin conexión" color="dim"/>
       </div>
-      <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
-        borderRadius:10,padding:20,textAlign:"center"}}>
-        <div style={{fontSize:"2rem",marginBottom:12}}>📡</div>
-        <div style={{fontWeight:600,color:"var(--muted)",marginBottom:8}}>
+      <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+        borderRadius:14,padding:28,textAlign:"center"}}>
+        <div style={{fontSize:"2.5rem",marginBottom:14,opacity:.3}}>📡</div>
+        <div style={{fontWeight:700,fontSize:"1rem",color:"var(--muted)",marginBottom:10}}>
           Hardware no alcanzable desde la nube
         </div>
-        <div style={{fontSize:".78rem",color:"var(--dim)",lineHeight:1.7,maxWidth:400,margin:"0 auto"}}>
-          La IP <code style={{background:"var(--surface3)",padding:"1px 5px",
-          borderRadius:4,fontSize:".72rem"}}>{m.url||"local"}</code> está en tu red
-          local. Para ver temperatura, fan y estado en tiempo real desde cualquier lugar,
-          necesitas configurar un <strong style={{color:"var(--text)"}}>tunnel de Cloudflare</strong>.
+        <div style={{fontSize:".8rem",color:"var(--dim)",lineHeight:1.9,
+          maxWidth:420,margin:"0 auto",marginBottom:14}}>
+          <code style={{background:"var(--surface3)",padding:"2px 8px",borderRadius:6,
+            fontFamily:"'JetBrains Mono',monospace",fontSize:".75rem"}}>{m.url}</code>
+          {" "}es una IP local. Necesita un relay en la misma red para enviar datos a la nube.
         </div>
-        <div style={{marginTop:14,fontSize:".75rem",color:"var(--green)"}}>
-          ✅ Los datos del pool funcionan sin problema
+        <div style={{display:"inline-flex",alignItems:"center",gap:6,
+          fontSize:".78rem",color:"var(--green)"}}>
+          <LiveDot status="ok"/>Los datos del pool funcionan sin problema
         </div>
       </div>
     </Card>
   );
 
   return(
-    <Card glow={status==="ok"}>
+    <Card accent={st==="crit"?"red":st==="warn"?"green":"green"}>
       {/* Header */}
-      <div style={{display:"flex",justifyContent:"space-between",
-        alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <Dot status={status} pulse/>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+        marginBottom:24,flexWrap:"wrap",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <LiveDot status={st}/>
           <div>
-            <div style={{fontWeight:700,fontSize:"1rem"}}>{m.name}</div>
-            <div style={{fontSize:".72rem",color:"var(--dim)"}}>{m.model}</div>
+            <div style={{fontWeight:800,fontSize:"1.1rem",letterSpacing:"-.02em"}}>{m.name}</div>
+            <div style={{fontSize:".7rem",color:"var(--dim)",marginTop:1,
+              fontFamily:"'JetBrains Mono',monospace"}}>{m.model} · {m.stratumURL}</div>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:".75rem",fontWeight:600,color:statusColor,
-            background:`${statusColor}20`,padding:"4px 12px",borderRadius:20,
-            border:`1px solid ${statusColor}40`}}>{statusLabel}</span>
-          <span style={{fontSize:".72rem",color:"var(--dim)"}}>Up: {m.uptimeFmt}</span>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <Chip label={st==="ok"?"Activo":st==="crit"?"¡Crítico!":"Temp alta"}
+            color={st==="ok"?"green":st==="crit"?"red":"yellow"} dot/>
+          <Chip label={`Up: ${m.uptimeFmt}`} color="dim"/>
         </div>
       </div>
 
-      {/* Grid principal */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",
-        gap:16,marginBottom:20}}>
+      {/* Grid métricas */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",
+        gap:14,marginBottom:20}}>
 
         {/* Hashrate */}
-        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
-          borderRadius:10,padding:16}}>
-          <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
-            textTransform:"uppercase",color:"var(--dim)",marginBottom:8}}>Hashrate</div>
-          <div style={{fontSize:"2rem",fontWeight:800,color:"var(--green)",
-            letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>{m.hashFmt}</div>
-          <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:4}}>
-            Frecuencia: {m.frequency} MHz
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+          borderRadius:14,padding:18}}>
+          <div style={{fontSize:".58rem",fontWeight:700,letterSpacing:".12em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:10}}>⚡ Hashrate</div>
+          <BigNumber val={fmtHR(m.hashHps).val} unit={fmtHR(m.hashHps).unit}
+            color="var(--green)" size="1.8rem"/>
+          <div style={{marginTop:12}}>
+            <ProgressBar value={m.frequency||0} max={600} color="var(--green)"
+              label="Frecuencia" right={`${m.frequency} MHz`}/>
           </div>
         </div>
 
-        {/* Temperatura gauge */}
-        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
-          borderRadius:10,padding:16}}>
-          <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
-            textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>Temperatura</div>
+        {/* Temperatura */}
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+          borderRadius:14,padding:18}}>
+          <div style={{fontSize:".58rem",fontWeight:700,letterSpacing:".12em",
+            textTransform:"uppercase",color:"var(--dim)",marginBottom:2}}>🌡️ Temperatura</div>
           <TempGauge temp={m.temp}/>
-          <div style={{display:"flex",justifyContent:"space-between",
-            fontSize:".72rem",color:"var(--dim)",marginTop:4}}>
-            <span>VR: {m.vrTemp}°C</span>
-            <span>Límite: 75°C</span>
+          <div style={{display:"flex",justifyContent:"center",gap:20,fontSize:".72rem",
+            color:"var(--dim)"}}>
+            <span>VR: <b style={{color:"var(--text)"}}>{m.vrTemp}°C</b></span>
+            <span>Lím: <b style={{color:"var(--red)"}}>75°C</b></span>
           </div>
         </div>
 
-        {/* Potencia y fan */}
-        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
-          borderRadius:10,padding:16}}>
-          <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
-            textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Potencia · Ventilador</div>
-          <Bar value={m.power?.toFixed(0)||0} max={30} color="var(--blue)" label="Potencia" unit=" W"/>
-          <Bar value={m.fanrpm||0} max={6000} color="var(--muted)" label="Ventilador" unit=" rpm"/>
-          <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:8}}>
-            Eficiencia: {m.power&&m.hashHps
-              ? ((m.power/(m.hashHps/1e12)).toFixed(1))+" J/TH" : "—"}
-          </div>
+        {/* Potencia + Fan */}
+        <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+          borderRadius:14,padding:18,display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{fontSize:".58rem",fontWeight:700,letterSpacing:".12em",
+            textTransform:"uppercase",color:"var(--dim)"}}>⚙️ Potencia · Fan</div>
+          <ProgressBar value={m.power||0} max={30} color="var(--blue)"
+            label="Potencia" right={`${m.power?.toFixed(1)} W`}/>
+          <ProgressBar value={m.fanrpm||0} max={6000} color="var(--purple,#b39ddb)"
+            label="Ventilador" right={`${(m.fanrpm||0).toLocaleString()} rpm`}/>
+          {m.power&&m.hashHps>0&&(
+            <div style={{textAlign:"center",background:"var(--surface3)",
+              borderRadius:9,padding:"7px",fontSize:".74rem",color:"var(--muted)"}}>
+              Eficiencia: <b style={{color:"var(--text)"}}>{(m.power/(m.hashHps/1e12)).toFixed(1)} J/TH</b>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Shares */}
-      <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
-        borderRadius:10,padding:16,marginBottom:16}}>
-        <div style={{fontSize:".62rem",fontWeight:600,letterSpacing:".1em",
-          textTransform:"uppercase",color:"var(--dim)",marginBottom:12}}>Shares</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
-          <div>
-            <div style={{fontSize:"1.5rem",fontWeight:800,color:"var(--green)",
-              fontVariantNumeric:"tabular-nums"}}>{m.sharesAccepted?.toLocaleString()}</div>
-            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Aceptadas</div>
-          </div>
-          <div>
-            <div style={{fontSize:"1.5rem",fontWeight:800,color:m.sharesRejected>0?"var(--red)":"var(--text)",
-              fontVariantNumeric:"tabular-nums"}}>{m.sharesRejected?.toLocaleString()||0}</div>
-            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Rechazadas</div>
-          </div>
-          <div>
-            <div style={{fontSize:"1.5rem",fontWeight:800,color:"var(--gold)",
-              fontVariantNumeric:"tabular-nums"}}>{m.bestDiff}</div>
-            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Mejor share</div>
-          </div>
-          {acceptRate&&<div>
-            <div style={{fontSize:"1.5rem",fontWeight:800,color:"var(--green)",
-              fontVariantNumeric:"tabular-nums"}}>{acceptRate}%</div>
-            <div style={{fontSize:".72rem",color:"var(--dim)"}}>Tasa aceptación</div>
-          </div>}
+      <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+        borderRadius:14,padding:18,marginBottom:14}}>
+        <div style={{fontSize:".58rem",fontWeight:700,letterSpacing:".12em",
+          textTransform:"uppercase",color:"var(--dim)",marginBottom:16}}>📋 Shares</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",
+          gap:10,marginBottom:14}}>
+          {[
+            {l:"Aceptadas",v:m.sharesAccepted?.toLocaleString(),c:"var(--green)"},
+            {l:"Rechazadas",v:(m.sharesRejected||0).toLocaleString(),
+              c:m.sharesRejected>0?"var(--red)":"var(--muted)"},
+            {l:"Mejor share",v:m.bestDiff,c:"var(--gold)"},
+            {l:"Tasa",v:`${rate}%`,
+              c:rate>98?"var(--green)":rate>90?"var(--yellow)":"var(--red)"},
+          ].map((s,i)=>(
+            <div key={i} style={{background:"var(--surface3)",border:"1px solid var(--border)",
+              borderRadius:10,padding:"12px 14px"}}>
+              <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:4}}>{s.l}</div>
+              <div style={{fontSize:"1.05rem",fontWeight:700,color:s.c,
+                fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+            </div>
+          ))}
         </div>
-        {acceptRate&&<div style={{marginTop:12}}>
-          <Bar value={parseFloat(acceptRate)} max={100} color="var(--green)" label="Aceptación"/>
-        </div>}
+        <ProgressBar value={parseFloat(rate)||0} max={100} color="var(--green)"
+          label="Tasa de aceptación" right={`${rate}%`}/>
       </div>
 
-      {/* Stratum */}
-      <div style={{fontSize:".72rem",color:"var(--dim)",display:"flex",
-        alignItems:"center",gap:6}}>
-        <span style={{color:"var(--green)"}}>●</span>
-        Conectado a: <span style={{color:"var(--text)",fontFamily:"monospace"}}>{m.stratumURL}</span>
+      {/* Footer */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+        fontSize:".72rem",color:"var(--dim)",padding:"10px 14px",
+        background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:9,flexWrap:"wrap",gap:8}}>
+        <span>Mejor sesión: <b style={{color:"var(--gold)"}}>{m.bestSessionDiff}</b></span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}>
+          <LiveDot status="ok"/>
+          <span style={{color:"var(--green)"}}>Minando</span>
+        </span>
       </div>
     </Card>
   );
 }
 
-// ── Tab Resumen ───────────────────────────────────────────────
-function TabResumen({data}){
-  const {miners=[],publicPool:pp,netDiffFmt,odds}=data;
-  const onlineMiners=miners.filter(m=>m.online);
-
-  return(<div style={{display:"flex",flexDirection:"column",gap:24}}>
-    {/* KPIs */}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(175px,1fr))",gap:12}}>
-      {[
-        {label:"HASHRATE AHORA",val:pp?.hashFmt10m||"—",sub:"Pool · 10 min",color:"var(--green)"},
-        {label:"HASHRATE 1H",val:pp?.hashFmt1h||"—",sub:"Promedio hora",color:"var(--text)"},
-        {label:"MEJOR SHARE",val:pp?.bestEverFmt||"—",sub:"All-time",color:"var(--gold)"},
-        {label:"DIFICULTAD RED",val:netDiffFmt||"—",sub:"Bitcoin mainnet",color:"var(--text)"},
-      ].map((k,i)=>(
-        <div key={i} style={{background:"var(--surface)",border:"1px solid var(--border2)",
-          borderRadius:"var(--r)",padding:"16px 20px"}}>
-          <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
-            textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>{k.label}</div>
-          <div style={{fontSize:"1.5rem",fontWeight:800,letterSpacing:"-.03em",
-            color:k.color,fontVariantNumeric:"tabular-nums"}}>{k.val}</div>
-          <div style={{fontSize:".68rem",color:"var(--dim)",marginTop:3}}>{k.sub}</div>
-        </div>
-      ))}
-    </div>
-
-    {/* Estado mineros */}
-    <section>
-      <SectionTitle>Estado de equipos</SectionTitle>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
-        {miners.map((m,i)=>(
-          <Card key={i} glow={m.online}>
+// ── Pool tab ───────────────────────────────────────────────────
+function TabPool({ data }) {
+  const {publicPool:pp,ckpool,netDiffFmt,address}=data;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:16,animation:"fade-up .3s ease"}}>
+      {pp?.online?(
+        <>
+          <Card accent="blue">
             <div style={{display:"flex",justifyContent:"space-between",
-              alignItems:"center",marginBottom:m.online?14:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <Dot status={!m.online?"off":m.temp>=75?"crit":m.temp>=68?"warn":"ok"} pulse={m.online}/>
-                <div>
-                  <div style={{fontWeight:600}}>{m.name}</div>
-                  {m.online&&<div style={{fontSize:".7rem",color:"var(--dim)"}}>{m.model}</div>}
+              alignItems:"flex-start",flexWrap:"wrap",gap:16,marginBottom:20}}>
+              <div>
+                <Chip label="public-pool.io" color="blue" dot/>
+                <div style={{marginTop:12}}>
+                  <BigNumber val={fmtHR(pp.hashHps10m).val} unit={fmtHR(pp.hashHps10m).unit}
+                    color="var(--blue)" size="2.4rem"/>
+                  <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:3}}>10 min</div>
                 </div>
               </div>
-              {m.online&&<div style={{fontSize:"1.3rem",fontWeight:800,color:"var(--green)",
-                fontVariantNumeric:"tabular-nums"}}>{m.hashFmt}</div>}
+              <div>
+                <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:4}}>1 HORA</div>
+                <BigNumber val={fmtHR(pp.hashHps1h).val} unit={fmtHR(pp.hashHps1h).unit} size="1.4rem"/>
+              </div>
             </div>
-            {m.online?(
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                {[
-                  {l:"Temp",v:`${m.temp}°C`,c:m.temp>=75?"var(--red)":m.temp>=68?"var(--yellow)":"var(--green)"},
-                  {l:"Potencia",v:`${m.power?.toFixed(0)}W`,c:"var(--text)"},
-                  {l:"Fan",v:`${m.fanrpm?.toLocaleString()}`,c:"var(--text)"},
-                ].map((s,j)=>(
-                  <div key={j} style={{background:"var(--surface2)",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
-                    <div style={{fontSize:".65rem",color:"var(--dim)",marginBottom:2}}>{s.l}</div>
-                    <div style={{fontSize:".9rem",fontWeight:700,color:s.c,fontVariantNumeric:"tabular-nums"}}>{s.v}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(135px,1fr))",gap:10}}>
+              {[
+                {l:"Workers",      v:pp.workerCount},
+                {l:"Shares totales",v:pp.shares?.toLocaleString("es-CO")},
+                {l:"Shares 10 min",v:pp.sharesLast10m},
+                {l:"Shares 1h",    v:pp.sharesLastHour},
+                {l:"Mejor share",  v:pp.bestEverFmt,c:"var(--gold)"},
+                {l:"Candidatos",   v:pp.blockCandidates||0},
+                {l:"Última share", v:timeAgo(pp.minsSinceShare),
+                  c:pp.minsSinceShare>15?"var(--red)":"var(--green)"},
+                {l:"Dificultad red",v:netDiffFmt},
+              ].map((s,i)=>(
+                <div key={i} style={{background:"var(--surface2)",border:"1px solid var(--border)",
+                  borderRadius:9,padding:"10px 14px"}}>
+                  <div style={{fontSize:".6rem",color:"var(--dim)",marginBottom:3}}>{s.l}</div>
+                  <div style={{fontSize:".86rem",fontWeight:600,color:s.c||"var(--text)",
+                    fontVariantNumeric:"tabular-nums"}}>{s.v??<span style={{color:"var(--dim)"}}>—</span>}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {pp.workers?.length>0&&(
+            <Card>
+              <div style={{fontSize:".63rem",fontWeight:700,letterSpacing:".12em",
+                textTransform:"uppercase",color:"var(--dim)",marginBottom:16}}>Workers</div>
+              <div style={{overflowX:"auto"}}>
+                {pp.workers.map((w,i)=>(
+                  <div key={i} style={{display:"grid",
+                    gridTemplateColumns:"minmax(140px,1fr) 120px 120px 100px 80px",
+                    gap:12,padding:"12px 0",borderBottom:"1px solid var(--border)",
+                    alignItems:"center",minWidth:580}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <LiveDot status="ok"/>
+                      <span style={{fontWeight:600,fontSize:".8rem",
+                        fontFamily:"'JetBrains Mono',monospace"}}>{w.name}</span>
+                    </div>
+                    <span style={{color:"var(--green)",fontWeight:700,
+                      fontSize:".84rem",fontVariantNumeric:"tabular-nums"}}>{w.hashFmt}</span>
+                    <span style={{color:"var(--gold)",fontVariantNumeric:"tabular-nums",
+                      fontSize:".84rem"}}>{w.bestEverFmt}</span>
+                    <span style={{fontSize:".78rem",
+                      color:w.minsSinceShare>15?"var(--red)":"var(--muted)"}}>
+                      {timeAgo(w.minsSinceShare)}</span>
+                    <Chip label={w.payoutMode||"—"} color="dim"/>
                   </div>
                 ))}
               </div>
-            ):(
-              <div style={{fontSize:".78rem",color:"var(--red)"}}>
-                Sin conexión — ver tab Hardware para detalles
-              </div>
-            )}
-          </Card>
-        ))}
-      </div>
-    </section>
-
-    {/* Pool resumen */}
-    {pp?.online&&(
-      <section>
-        <SectionTitle>Pool · Actividad</SectionTitle>
-        <Card>
-          <Badge label="public-pool.io" bg="var(--blue-bg)" fg="var(--blue)"/>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:0}}>
-            <StatRow label="Workers activos"  value={pp.workerCount}/>
-            <StatRow label="Shares totales"   value={pp.shares?.toLocaleString("es-CO")}/>
-            <StatRow label="Shares (10 min)"  value={pp.sharesLast10m}/>
-            <StatRow label="Shares (1 hora)"  value={pp.sharesLastHour}/>
-            <StatRow label="Última share"     value={timeAgo(pp.minsSinceShare)}
-              valueStyle={pp.minsSinceShare>15?{color:"var(--red)"}:{color:"var(--green)"}}/>
-            <StatRow label="Candidatos bloque" value={pp.blockCandidates||0}/>
-          </div>
-        </Card>
-      </section>
-    )}
-
-    {/* Odds rápido */}
-    {odds&&(
-      <section>
-        <SectionTitle>Probabilidad de bloque</SectionTitle>
-        <Card>
-          <div style={{display:"flex",justifyContent:"space-between",
-            alignItems:"center",flexWrap:"wrap",gap:16}}>
-            <div>
-              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
-                textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>POR DÍA</div>
-              <div style={{fontSize:"2rem",fontWeight:800,color:"var(--gold)",
-                letterSpacing:"-.03em",fontVariantNumeric:"tabular-nums"}}>
-                1 / {odds.oneInDays.toLocaleString("es-CO")}</div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
-                textTransform:"uppercase",color:"var(--dim)",marginBottom:4}}>PROMEDIO EST.</div>
-              <div style={{fontSize:"1.4rem",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
-                ~{Math.round(odds.years).toLocaleString("es-CO")} años</div>
-            </div>
-            <a href="#" onClick={e=>{e.preventDefault();}} style={{fontSize:".8rem",color:"var(--blue)"}}>
-              Ver análisis completo →
-            </a>
-          </div>
-        </Card>
-      </section>
-    )}
-  </div>);
-}
-
-// ── Tab Pool ──────────────────────────────────────────────────
-function TabPool({data}){
-  const {publicPool:pp,ckpool,netDiffFmt,address}=data;
-  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
-    {/* Public pool */}
-    {pp?.online?(
-      <>
-        <Card>
-          <Badge label="public-pool.io" bg="var(--blue-bg)" fg="var(--blue)"/>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:16,marginBottom:16}}>
-            <div>
-              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
-                textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>HASHRATE 10 MIN</div>
-              <div style={{fontSize:"2.2rem",fontWeight:800,color:"var(--blue)",
-                letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>{pp.hashFmt10m}</div>
-            </div>
-            <div>
-              <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
-                textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>HASHRATE 1 HORA</div>
-              <div style={{fontSize:"2.2rem",fontWeight:800,color:"var(--text)",
-                letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>{pp.hashFmt1h}</div>
-            </div>
-          </div>
-          <StatRow label="Workers activos"      value={pp.workerCount}/>
-          <StatRow label="Shares totales"       value={pp.shares?.toLocaleString("es-CO")}/>
-          <StatRow label="Shares (10 min)"      value={pp.sharesLast10m}/>
-          <StatRow label="Shares (1 hora)"      value={pp.sharesLastHour}/>
-          <StatRow label="Mejor share histórica" value={<span style={{color:"var(--gold)",fontWeight:700}}>{pp.bestEverFmt}</span>}/>
-          <StatRow label="Última share"          value={timeAgo(pp.minsSinceShare)}
-            valueStyle={pp.minsSinceShare>15?{color:"var(--red)"}:{color:"var(--green)"}}/>
-          <StatRow label="Candidatos de bloque"  value={pp.blockCandidates||0}/>
-          <StatRow label="Dificultad de red"     value={netDiffFmt||"—"}/>
-          {pp.blockProgressPct&&<StatRow label="% hacia un bloque" value={pp.blockProgressPct+"%"}/>}
-        </Card>
-
-        {/* Workers */}
-        {pp.workers?.length>0&&(
-          <Card>
-            <div style={{fontSize:".67rem",fontWeight:600,letterSpacing:".1em",
-              textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Workers</div>
-            {pp.workers.map((w,i)=>(
-              <div key={i} style={{display:"grid",
-                gridTemplateColumns:"2fr 1fr 1fr 1fr 80px",gap:8,
-                padding:"10px 0",borderBottom:"1px solid var(--border)",
-                fontSize:".82rem",alignItems:"center"}}>
-                <div style={{fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                  <Dot status="ok" pulse/>{w.name}
-                </div>
-                <div style={{color:"var(--green)",fontWeight:600,
-                  fontVariantNumeric:"tabular-nums"}}>{w.hashFmt}</div>
-                <div style={{color:"var(--gold)",fontVariantNumeric:"tabular-nums"}}>{w.bestEverFmt}</div>
-                <div style={{color:w.minsSinceShare>15?"var(--red)":"var(--muted)"}}>
-                  {timeAgo(w.minsSinceShare)}</div>
-                <div style={{fontSize:".7rem",color:"var(--dim)",background:"var(--surface2)",
-                  padding:"2px 7px",borderRadius:10,textAlign:"center"}}>{w.payoutMode}</div>
-              </div>
-            ))}
-          </Card>
-        )}
-      </>
-    ):(
-      <Card><p style={{color:"var(--muted)",padding:12}}>Sin datos de public-pool todavía.<br/>
-        <small style={{color:"var(--dim)"}}>{pp?.error}</small></p></Card>
-    )}
-
-    {/* ckpool */}
-    <Card>
-      <Badge label="solo.ckpool.org" bg="var(--green-bg)" fg="var(--green)"/>
-      {ckpool?.online?(
-        <>
-          <StatRow label="Hashrate 5m"    value={ckpool.hashFmt5m}/>
-          <StatRow label="Hashrate 1d"    value={ckpool.hashFmt1d}/>
-          <StatRow label="Workers"        value={ckpool.workerCount}/>
-          <StatRow label="Mejor share"    value={<span style={{color:"var(--gold)"}}>{ckpool.bestEverFmt}</span>}/>
-          <StatRow label="Última share"   value={timeAgo(ckpool.minsSinceShare)}/>
+            </Card>
+          )}
         </>
       ):(
-        <p style={{color:"var(--muted)",fontSize:".82rem"}}>
-          Sin actividad en este pool — ¿tu minero está apuntando a public-pool.io?
-        </p>
+        <Card><p style={{color:"var(--muted)",padding:12}}>Sin datos de public-pool.<br/>
+          <small style={{color:"var(--dim)"}}>{pp?.error}</small></p></Card>
       )}
-    </Card>
 
-    {/* Link */}
-    <Card>
-      <div style={{display:"flex",justifyContent:"space-between",
-        alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <div>
-          <div style={{fontWeight:600,marginBottom:4}}>Ver en public-pool.io</div>
-          <div style={{fontSize:".78rem",color:"var(--muted)"}}>Interfaz completa del pool</div>
+      <Card>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+          marginBottom:12,flexWrap:"wrap",gap:10}}>
+          <Chip label="solo.ckpool.org" color={ckpool?.online?"green":"dim"} dot={ckpool?.online}/>
+          {!ckpool?.online&&<span style={{fontSize:".74rem",color:"var(--dim)"}}>
+            Sin actividad — ¿apuntando a public-pool?</span>}
         </div>
-        <a href={`https://web.public-pool.io/#/app/${address}`}
-          target="_blank" rel="noreferrer"
-          style={{background:"var(--blue-bg)",color:"var(--blue)",border:"1px solid var(--blue)",
-            padding:"9px 18px",borderRadius:"var(--r-sm)",fontSize:".84rem",
-            fontWeight:600,textDecoration:"none"}}>
-          Abrir →
-        </a>
-      </div>
-    </Card>
-  </div>);
+        {ckpool?.online?(
+          <>
+            <StatRow label="Hashrate 5m"  value={ckpool.hashFmt5m}/>
+            <StatRow label="Hashrate 1d"  value={ckpool.hashFmt1d}/>
+            <StatRow label="Workers"      value={ckpool.workerCount}/>
+            <StatRow label="Mejor share"  value={<span style={{color:"var(--gold)"}}>{ckpool.bestEverFmt}</span>}/>
+            <StatRow label="Última share" value={timeAgo(ckpool.minsSinceShare)}/>
+          </>
+        ):(
+          <div style={{fontSize:".8rem",color:"var(--dim)",fontStyle:"italic",padding:"4px 0"}}>
+            No hay registros para esta dirección en ckpool.
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+          flexWrap:"wrap",gap:12}}>
+          <div>
+            <div style={{fontWeight:600,marginBottom:3}}>Ver en public-pool.io</div>
+            <div style={{fontSize:".74rem",color:"var(--muted)"}}>Interfaz completa del pool</div>
+          </div>
+          <a href={`https://web.public-pool.io/#/app/${address}`}
+            target="_blank" rel="noreferrer"
+            style={{display:"inline-flex",alignItems:"center",gap:6,
+              background:"var(--blue-bg)",color:"var(--blue)",
+              border:"1px solid rgba(79,195,247,.25)",padding:"9px 18px",
+              borderRadius:"var(--r-sm)",fontSize:".84rem",fontWeight:600,textDecoration:"none"}}>
+            Abrir ↗
+          </a>
+        </div>
+      </Card>
+    </div>
+  );
 }
 
-// ── Tab Probabilidad ──────────────────────────────────────────
-function TabOdds({data}){
+// ── Probabilidad tab ───────────────────────────────────────────
+function TabOdds({ data }) {
   const {odds,netDiffFmt,publicPool:pp,netDiff}=data;
-  if(!odds) return <Card><p style={{color:"var(--muted)",padding:12}}>Sin datos suficientes.</p></Card>;
+  if(!odds) return <Card><p style={{color:"var(--muted)",padding:12}}>Sin datos.</p></Card>;
   const {oneInDays,years,perDay}=odds;
   const hps=pp?.online?(pp.hashHps10m||pp.hashHps1h):0;
 
-  const periods=[
+  const rows=[
     {l:"1 día",d:1},{l:"1 semana",d:7},{l:"1 mes",d:30},
     {l:"3 meses",d:90},{l:"6 meses",d:180},{l:"1 año",d:365},
     {l:"5 años",d:1825},{l:"10 años",d:3650},
   ].map(p=>({...p,prob:(1-Math.pow(1-perDay,p.d))*100}));
 
-  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
-    <Card>
-      <div style={{display:"flex",justifyContent:"space-between",
-        alignItems:"center",flexWrap:"wrap",gap:20,marginBottom:16}}>
-        <div>
-          <div style={{fontSize:".6rem",fontWeight:600,letterSpacing:".1em",
-            textTransform:"uppercase",color:"var(--dim)",marginBottom:6}}>PROBABILIDAD POR DÍA</div>
-          <div style={{fontSize:"2.6rem",fontWeight:800,color:"var(--gold)",
-            letterSpacing:"-.04em",fontVariantNumeric:"tabular-nums"}}>
-            1 / {oneInDays.toLocaleString("es-CO")}</div>
-          <div style={{fontSize:".75rem",color:"var(--dim)",marginTop:4}}>
-            Con {fmtHR(hps)} de hashrate</div>
-        </div>
-        <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",
-          borderRadius:10,padding:"16px 24px",textAlign:"center"}}>
-          <div style={{fontSize:"2.2rem",fontWeight:800,fontVariantNumeric:"tabular-nums"}}>
-            ~{Math.round(years).toLocaleString("es-CO")}</div>
-          <div style={{fontSize:".72rem",color:"var(--dim)",marginTop:2}}>años promedio</div>
-        </div>
-      </div>
-      <div style={{background:"var(--surface2)",borderRadius:8,padding:"12px 14px",
-        fontSize:".75rem",color:"var(--dim)",lineHeight:1.7}}>
-        ⚡ Esto es estadística pura — podrías ganar mañana o en décadas. Premio: ~3.125 BTC.
-      </div>
-    </Card>
-
-    <Card>
-      <div style={{fontSize:".67rem",fontWeight:600,letterSpacing:".1em",
-        textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>
-        Probabilidad acumulada</div>
-      {periods.map((p,i)=>{
-        const c=p.prob>50?"var(--green)":p.prob>10?"var(--yellow)":"var(--blue)";
-        return(<div key={i} style={{display:"grid",gridTemplateColumns:"100px 1fr 100px",
-          gap:12,alignItems:"center",padding:"8px 0",
-          borderBottom:"1px solid var(--border)"}}>
-          <div style={{fontSize:".82rem"}}>{p.l}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{flex:1,height:5,background:"var(--border2)",borderRadius:3}}>
-              <div style={{height:"100%",width:`${Math.min(p.prob*2,100)}%`,
-                background:c,borderRadius:3,minWidth:2}}/>
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:16,animation:"fade-up .3s ease"}}>
+      <Card accent="gold">
+        <div style={{display:"flex",justifyContent:"space-between",
+          alignItems:"center",flexWrap:"wrap",gap:20,marginBottom:20}}>
+          <div>
+            <div style={{fontSize:".6rem",fontWeight:700,letterSpacing:".12em",
+              textTransform:"uppercase",color:"var(--dim)",marginBottom:8}}>Probabilidad por día</div>
+            <BigNumber val={`1 / ${oneInDays.toLocaleString("es-CO")}`}
+              color="var(--gold)" size="2rem"/>
+            <div style={{fontSize:".73rem",color:"var(--dim)",marginTop:6}}>
+              Con {hps?fmtHR(hps).full:"el hashrate del pool"}
             </div>
-            <span style={{fontSize:".78rem",color:c,fontWeight:600,minWidth:50}}>
-              {p.prob<0.01?p.prob.toExponential(2):p.prob.toFixed(2)}%</span>
           </div>
-          <div style={{fontSize:".75rem",color:"var(--muted)",textAlign:"right",
-            fontVariantNumeric:"tabular-nums"}}>
-            1:{Math.round(1/(p.prob/100)).toLocaleString("es-CO")}</div>
-        </div>);
-      })}
-    </Card>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div style={{background:"var(--surface2)",border:"1px solid var(--border)",
+              borderRadius:12,padding:"14px 20px",textAlign:"center"}}>
+              <div style={{fontSize:"2rem",fontWeight:900,fontVariantNumeric:"tabular-nums"}}>
+                ~{Math.round(years).toLocaleString("es-CO")}</div>
+              <div style={{fontSize:".68rem",color:"var(--dim)",marginTop:2}}>años promedio</div>
+            </div>
+            <div style={{background:"var(--gold-bg)",border:"1px solid rgba(255,213,79,.2)",
+              borderRadius:12,padding:"14px 20px",textAlign:"center"}}>
+              <div style={{fontSize:"1.8rem",fontWeight:900}}>🍀</div>
+              <div style={{fontSize:".72rem",color:"var(--muted)",marginTop:4}}>~3.125 BTC</div>
+            </div>
+          </div>
+        </div>
+        <div style={{padding:"10px 14px",background:"rgba(255,213,79,.05)",
+          border:"1px solid rgba(255,213,79,.1)",borderRadius:9,
+          fontSize:".74rem",color:"var(--dim)",lineHeight:1.7}}>
+          ⚡ Estadística pura — sin garantías. Podrías ganar mañana o en décadas.
+        </div>
+      </Card>
 
-    <Card>
-      <div style={{fontSize:".67rem",fontWeight:600,letterSpacing:".1em",
-        textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Contexto de red</div>
-      <StatRow label="Dificultad de red"           value={netDiffFmt}/>
-      <StatRow label="Mejor share histórica"        value={<span style={{color:"var(--gold)"}}>{pp?.bestEverFmt}</span>}/>
-      <StatRow label="% de dificultad alcanzado"    value={netDiff&&pp?.bestEver
-        ?((pp.bestEver/netDiff)*100).toExponential(3)+"%":"—"}/>
-      <StatRow label="Premio por bloque"            value="~3.125 BTC 🍀"/>
-    </Card>
-  </div>);
+      <Card>
+        <div style={{fontSize:".63rem",fontWeight:700,letterSpacing:".12em",
+          textTransform:"uppercase",color:"var(--dim)",marginBottom:16}}>Probabilidad acumulada</div>
+        {rows.map((r,i)=>{
+          const c=r.prob>50?"var(--green)":r.prob>10?"var(--yellow)":"var(--blue)";
+          return(
+            <div key={i} style={{display:"grid",gridTemplateColumns:"90px 1fr 100px",
+              gap:14,alignItems:"center",padding:"10px 0",
+              borderBottom:i<rows.length-1?"1px solid var(--border)":"none"}}>
+              <span style={{fontSize:".82rem",color:"var(--muted)"}}>{r.l}</span>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{flex:1,height:4,background:"var(--surface3)",borderRadius:99}}>
+                  <div style={{height:"100%",borderRadius:99,
+                    width:`${Math.min(r.prob*2,100)}%`,background:c,
+                    minWidth:r.prob>0?2:0,boxShadow:`0 0 5px ${c}60`,
+                    transition:"width .5s ease"}}/>
+                </div>
+                <span style={{fontSize:".78rem",color:c,fontWeight:700,
+                  minWidth:55,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
+                  {r.prob<0.01?r.prob.toExponential(2):r.prob.toFixed(2)}%
+                </span>
+              </div>
+              <div style={{fontSize:".7rem",color:"var(--dim)",textAlign:"right",
+                fontVariantNumeric:"tabular-nums",fontFamily:"'JetBrains Mono',monospace"}}>
+                1:{(1/(r.prob/100)).toLocaleString("es-CO",{maximumFractionDigits:0})}
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+
+      <Card>
+        <div style={{fontSize:".63rem",fontWeight:700,letterSpacing:".12em",
+          textTransform:"uppercase",color:"var(--dim)",marginBottom:14}}>Contexto de red</div>
+        <StatRow label="Dificultad de red"          value={netDiffFmt} mono/>
+        <StatRow label="Mejor share histórica"       value={<span style={{color:"var(--gold)"}}>{pp?.bestEverFmt}</span>}/>
+        <StatRow label="% de dificultad alcanzado"   value={netDiff&&pp?.bestEver
+          ?((pp.bestEver/netDiff)*100).toExponential(3)+"%":"—"} mono/>
+        <StatRow label="Premio por bloque"           value="~3.125 BTC 🍀"/>
+      </Card>
+    </div>
+  );
 }
 
-// ── Dashboard ─────────────────────────────────────────────────
-export default function Dashboard(){
+// ── Dashboard ──────────────────────────────────────────────────
+export default function Dashboard() {
   const router=useRouter();
   const [data,setData]=useState(null);
   const [error,setError]=useState(null);
@@ -589,8 +757,6 @@ export default function Dashboard(){
   const [lastUpdate,setLastUpdate]=useState(null);
   const [countdown,setCountdown]=useState(REFRESH);
   const [tab,setTab]=useState("resumen");
-  const timerRef=useRef(null);
-  const cdRef=useRef(null);
 
   const fetchData=useCallback(async()=>{
     try{
@@ -607,13 +773,13 @@ export default function Dashboard(){
 
   useEffect(()=>{
     fetchData();
-    timerRef.current=setInterval(fetchData,REFRESH*1000);
-    return()=>clearInterval(timerRef.current);
+    const t=setInterval(fetchData,REFRESH*1000);
+    return()=>clearInterval(t);
   },[fetchData]);
 
   useEffect(()=>{
-    cdRef.current=setInterval(()=>setCountdown(c=>c<=1?REFRESH:c-1),1000);
-    return()=>clearInterval(cdRef.current);
+    const t=setInterval(()=>setCountdown(c=>c<=1?REFRESH:c-1),1000);
+    return()=>clearInterval(t);
   },[]);
 
   async function logout(){
@@ -624,38 +790,72 @@ export default function Dashboard(){
   const miners=data?.miners??[];
   const ppOnline=data?.publicPool?.online;
   const shareLate=ppOnline&&data.publicPool.minsSinceShare>15;
-  const anyMinerOnline=miners.some(m=>m.online);
 
   return(<>
     <Head>
-      <title>⛏️ Minero Dashboard</title>
+      <title>⛏️ Minero</title>
       <meta name="viewport" content="width=device-width, initial-scale=1"/>
       <meta name="robots" content="noindex,nofollow"/>
+      <link rel="preconnect" href="https://fonts.googleapis.com"/>
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin=""/>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
     </Head>
 
-    <div className="root">
-      <header>
-        <div className="hl">
-          <span style={{fontSize:"1.1rem"}}>⛏️</span>
-          <span style={{fontSize:".95rem",fontWeight:700,letterSpacing:"-.02em"}}>Minero</span>
-          {data?.address&&<span className="addr">{truncAddr(data.address)}</span>}
-          {ppOnline&&<span className={`pill ${shareLate?"red":"green"}`}>
-            {shareLate?"⚠ Sin share +15min":"● Pool activo"}</span>}
-          {anyMinerOnline&&<span className="pill green">● Hardware online</span>}
-        </div>
-        <div className="hr-hdr">
-          {error&&<span className="err-b">⚠ {error}</span>}
-          {lastUpdate&&!loading&&(
-            <span className="upd">{lastUpdate.toLocaleTimeString("es-CO")} · {countdown}s</span>
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+      {/* Header */}
+      <header style={{
+        position:"sticky",top:0,zIndex:50,
+        background:"rgba(5,7,10,.88)",backdropFilter:"blur(20px) saturate(1.5)",
+        WebkitBackdropFilter:"blur(20px) saturate(1.5)",
+        borderBottom:"1px solid var(--border)",
+        padding:"0 28px",height:58,
+        display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:"1.2rem"}}>⛏️</span>
+            <span style={{fontSize:"1rem",fontWeight:800,letterSpacing:"-.03em",
+              background:"linear-gradient(90deg,var(--green),var(--blue))",
+              WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Minero</span>
+          </div>
+          {data?.address&&(
+            <span style={{fontSize:".7rem",color:"var(--muted)",fontFamily:"'JetBrains Mono',monospace",
+              background:"var(--surface2)",padding:"3px 10px",
+              borderRadius:99,border:"1px solid var(--border)"}}>
+              {truncAddr(data.address)}
+            </span>
           )}
-          <button className="btn-r" onClick={fetchData}>↻</button>
-          <button className="btn-out" onClick={logout}>Salir</button>
+          {ppOnline&&<Chip label={shareLate?"Sin share +15min":"Pool activo"}
+            color={shareLate?"red":"green"} dot/>}
+        </div>
+
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <LiveClock/>
+          {error&&<span style={{fontSize:".72rem",color:"var(--red)",padding:"3px 10px",
+            background:"var(--red-bg)",borderRadius:6}}>⚠ {error}</span>}
+          {lastUpdate&&!loading&&(
+            <span style={{fontSize:".68rem",color:"var(--dim)",
+              display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:"var(--green)",
+                animation:"pulse-glow 2s ease-in-out infinite",display:"inline-block"}}/>
+              {countdown}s
+            </span>
+          )}
+          <button onClick={fetchData}
+            style={{background:"none",border:"1px solid var(--border2)",color:"var(--muted)",
+              width:32,height:32,borderRadius:"var(--r-sm)",cursor:"pointer",fontSize:".9rem",
+              display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",
+              fontFamily:"inherit"}}>↻</button>
+          <button onClick={logout}
+            style={{background:"none",border:"1px solid var(--border2)",color:"var(--muted)",
+              padding:"6px 14px",borderRadius:"var(--r-sm)",cursor:"pointer",fontSize:".78rem",
+              transition:"all .15s",fontFamily:"inherit"}}>Salir</button>
         </div>
       </header>
 
-      <Tabs active={tab} onChange={setTab}/>
+      <NavTabs active={tab} onChange={setTab}/>
 
-      <main>
+      <main style={{maxWidth:1200,margin:"0 auto",padding:"28px 24px 64px",
+        width:"100%",flex:1}}>
         {loading?<Skeleton/>:<>
           {tab==="resumen"  &&<TabResumen  data={data}/>}
           {tab==="hardware" &&<TabHardware miners={miners}/>}
@@ -666,53 +866,25 @@ export default function Dashboard(){
     </div>
 
     <style jsx global>{`
-      @keyframes ping{0%{transform:scale(1);opacity:.6}70%{transform:scale(2.2);opacity:0}100%{transform:scale(2.2);opacity:0}}
-    `}</style>
-
-    <style jsx>{`
-      .root{min-height:100vh;display:flex;flex-direction:column;}
-      header{position:sticky;top:0;z-index:20;background:var(--surface);
-        border-bottom:1px solid var(--border2);padding:0 24px;height:54px;
-        display:flex;align-items:center;justify-content:space-between;gap:12px;}
-      .hl,.hr-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-      .addr{font-size:.72rem;color:var(--muted);font-family:monospace;
-        background:var(--surface3);padding:3px 8px;border-radius:20px;}
-      .pill{font-size:.7rem;font-weight:600;padding:3px 10px;border-radius:20px;}
-      .pill.green{background:var(--green-bg);color:var(--green);}
-      .pill.red{background:var(--red-bg);color:var(--red);}
-      .upd{font-size:.72rem;color:var(--dim);white-space:nowrap;}
-      .err-b{font-size:.72rem;color:var(--red);padding:3px 8px;
-        background:var(--red-bg);border-radius:6px;}
-      .btn-r{background:none;border:1px solid var(--border2);color:var(--muted);
-        width:30px;height:30px;border-radius:var(--r-sm);cursor:pointer;font-size:1rem;
-        display:flex;align-items:center;justify-content:center;
-        transition:border-color .15s,color .15s;}
-      .btn-r:hover{border-color:var(--text);color:var(--text);}
-      .btn-out{background:none;border:1px solid var(--border2);color:var(--muted);
-        padding:5px 14px;border-radius:var(--r-sm);cursor:pointer;font-size:.78rem;
-        transition:border-color .15s,color .15s;}
-      .btn-out:hover{border-color:var(--red);color:var(--red);}
-      main{max-width:1200px;margin:0 auto;padding:24px 24px 48px;width:100%;}
-      @media(max-width:600px){
-        header{padding:0 14px;height:auto;min-height:54px;padding:10px 14px;}
-        main{padding:16px 12px 40px;}
-        .addr,.upd{display:none;}
-      }
+      @keyframes ping{0%{transform:scale(1);opacity:.6}70%{transform:scale(2.3);opacity:0}100%{transform:scale(2.3);opacity:0}}
+      @keyframes pulse-glow{0%,100%{opacity:1}50%{opacity:.3}}
+      @keyframes fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+      @keyframes count-up{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
     `}</style>
   </>);
 }
 
-function Skeleton(){
-  return(<div style={{display:"grid",gap:14,
-    gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))"}}>
-    {[1,2,3,4].map(i=>(
-      <div key={i} style={{background:"var(--surface)",border:"1px solid var(--border2)",
-        borderRadius:"var(--r)",padding:22}}>
-        {[1,2,3].map(j=><div key={j} style={{height:14,background:"var(--surface3)",
-          borderRadius:6,marginBottom:12,width:j===2?"55%":"100%",
-          animation:"pulse 1.5s ease-in-out infinite"}}/>)}
-      </div>
-    ))}
-    <style jsx global>{`@keyframes pulse{0%,100%{opacity:.3}50%{opacity:.7}}`}</style>
-  </div>);
+function Skeleton() {
+  return(
+    <div style={{display:"grid",gap:14,
+      gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))"}}>
+      {[180,180,180,180,280,280].map((h,i)=>(
+        <div key={i} style={{background:"var(--surface)",border:"1px solid var(--border)",
+          borderRadius:"var(--r)",height:h,
+          backgroundImage:"linear-gradient(90deg,var(--surface) 0%,var(--surface2) 50%,var(--surface) 100%)",
+          backgroundSize:"200% 100%",animation:"shimmer 1.5s ease-in-out infinite"}}/>
+      ))}
+    </div>
+  );
 }
